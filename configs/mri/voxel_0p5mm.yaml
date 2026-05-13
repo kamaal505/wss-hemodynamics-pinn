@@ -1,0 +1,9 @@
+# @package mri
+# Synthetic MRI config: 0.5 mm isotropic voxels, noiseless default.
+# Override sigma from CLI: mri.sigma=<value>
+# Compute sigma via: sigma = VENC / VNR  (e.g. VENC=4e-5 m/s, VNR=20 -> sigma=2e-6)
+
+voxel_size_mm: 0.5
+sigma: 0.0            # m/s; 0.0 = noiseless
+rng_seed: 1701        # matches MRI_NOISE_SEED in seeds.py
+min_nodes_per_voxel: 1

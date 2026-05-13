@@ -1,0 +1,7 @@
+# @package mri
+# Synthetic MRI config: 2.5 mm isotropic voxels, noiseless default.
+
+voxel_size_mm: 2.5
+sigma: 0.0
+rng_seed: 1701
+min_nodes_per_voxel: 1

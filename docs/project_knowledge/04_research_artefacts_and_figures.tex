@@ -1,0 +1,169 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\titleformat{\section}{\large\bfseries\color{blue!40!black}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\title{\bfseries Research Artefacts and Figures: What to Produce, How to Read Them\\[0.3em]
+\large A figure-by-figure plan for the WSS-from-MRI PINN paper}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{The argument structure of the paper}
+A paper has a story. Before you start producing figures, write the headline claims --- one sentence each --- and design figures that make those claims visible. Working draft of headline claims for your project:
+
+\begin{enumerate}[label=\textbf{C\arabic*.}, leftmargin=2em]
+\item PINN-based reconstruction of WSS from synthetic 4D-flow MRI is feasible across a broad range of operating conditions, but its accuracy depends systematically on voxel size, noise level, and geometry.
+\item There exists a quantifiable boundary in the (voxel size, SNR) plane separating reliable from unreliable WSS recovery; we map this boundary for three representative geometries.
+\item A simple methodological tweak [Fourier features / hard no-slip / Bayesian] significantly extends the reliable region.
+\item Bayesian PINNs produce calibrated uncertainty maps; the predicted variance correlates with the true error.
+\end{enumerate}
+
+Every figure below should be obviously serving one of these claims. If you cannot identify which claim a figure supports, cut it.
+
+\section{The ten figures and three tables you should plan to produce}
+
+\subsection*{Figure 1 --- Pipeline overview (schematic)}
+\textbf{Content:} a left-to-right schematic. Box 1: CFD on a vascular geometry. Box 2: forward operator (voxel-averaging + Gaussian noise). Box 3: PINN training (network sketch + loss equation). Box 4: WSS evaluation via autograd at wall points. Box 5: comparison against CFD ground truth.\\
+\textbf{Purpose:} orient the reader in 30 seconds.\\
+\textbf{Reader takeaway:} ``so they generate ground truth, mimic MRI, fit a PINN, and recover WSS.''\\
+\textbf{Tools:} TikZ or Inkscape; do not hand-draw.
+
+\subsection*{Figure 2 --- Test geometries with stenosis severity panels}
+\textbf{Content:} 3D renders of your chosen geometries (e.g.\ idealised concentric stenosis, eccentric+bifurcation, one VMR case). For each, show 3--5 panels at varying stenosis severities.\\
+\textbf{Purpose:} make the geometry sweep concrete; allow reviewers to recognise what cases are clinically relevant.\\
+\textbf{Tools:} PyVista with consistent camera angles and lighting across all panels.
+
+\subsection*{Figure 3 --- CFD ground truth: velocity streamlines and WSS map}
+\textbf{Content:} For one representative geometry/severity, four panels: (a) volumetric streamlines coloured by speed, (b) cross-sectional velocity vectors at three axial locations (upstream, throat, downstream), (c) WSS map on the vessel surface, (d) centreline velocity profile.\\
+\textbf{Purpose:} establish the ``answer key'' that the PINN must reproduce. Mirrors the source paper's Figures 7--9.\\
+\textbf{Reader takeaway:} ``this is what a successful reconstruction must achieve.''
+
+\subsection*{Figure 4 --- Synthetic 4D-flow MRI inputs across noise/resolution operating points}
+\textbf{Content:} 3$\times$3 grid: rows are voxel sizes (e.g.\ 0.5\,mm, 1.0\,mm, 2.0\,mm); columns are SNR levels (e.g.\ 30, 15, 5). Each cell shows a representative 2D slice of the synthetic noisy velocity field for the same geometry.\\
+\textbf{Purpose:} convey to the reader \emph{what} the PINN sees. This is critical: reviewers must believe your synthetic MRI is realistic.\\
+\textbf{Tools:} matplotlib with a perceptually uniform colormap (\texttt{viridis}, not \texttt{jet}).
+
+\subsection*{Figure 5 --- The headline result: PINN-reconstructed WSS vs.\ CFD across operating points}
+\textbf{Content:} For one geometry, side-by-side surface WSS maps: CFD ground truth, baseline reconstruction (e.g.\ trilinear + finite-difference), supervised MLP, your PINN, and (if applicable) PINN+RFF. Repeat at one or two challenging operating points (e.g.\ 1\,mm voxels, SNR\,10).\\
+\textbf{Purpose:} the visual ``money shot'' for Claim C1. Reader sees that the PINN map matches the CFD map, while baselines do not.\\
+\textbf{Reader takeaway:} ``the PINN gets WSS right where simple methods fail.''
+
+\subsection*{Figure 6 --- Sensitivity heatmaps over (voxel size, SNR) for each geometry}
+\textbf{Content:} For each geometry, a heatmap with voxel size on one axis, SNR on the other, and a WSS-error metric (e.g.\ NRMSE on $\tau_w$) as the colour. Overlay an iso-contour at, say, 20\% error --- this is your ``reliable region.''\\
+\textbf{Purpose:} the central artefact of the paper. This is Claim C2 in one figure.\\
+\textbf{Reader takeaway:} ``below 1.5\,mm voxels and SNR\,10, WSS recovery is reliable; above that, it isn't.''\\
+\textbf{Tools:} matplotlib with \texttt{contourf} + \texttt{contour}; report numbers in the cells.\\
+\textbf{Variants:} produce one per geometry to expose the geometry-irregularity axis. The differences between heatmaps are themselves a result.
+
+\subsection*{Figure 7 --- Centreline and radial profile comparisons}
+\textbf{Content:} Mirroring source paper's Figures 10--13, but for your reconstructed fields: (a) centreline velocity magnitude, CFD vs.\ baseline vs.\ PINN, at one or two operating points; (b) radial velocity profiles at upstream/throat/downstream stations.\\
+\textbf{Purpose:} demonstrate that the PINN gets the \emph{spatial structure} right, not just an averaged metric.\\
+\textbf{Reader takeaway:} ``the PINN reproduces the throat speed-up correctly; the baselines smear it.''
+
+\subsection*{Figure 8 --- Bland--Altman and scatter for WSS}
+\textbf{Content:} Two panels per geometry. (a) Scatter plot: $\tau_w^{\text{PINN}}$ vs.\ $\tau_w^{\text{CFD}}$ pointwise on the wall, with $y=x$ line and per-cell density colouring. (b) Bland--Altman plot: $\tau_w^{\text{PINN}} - \tau_w^{\text{CFD}}$ vs.\ $(\tau_w^{\text{PINN}} + \tau_w^{\text{CFD}})/2$, with bias line and 95\% limits of agreement.\\
+\textbf{Purpose:} the clinically literate reader expects this analysis. Reviewers in clinical-bridge journals (CBM, ABE, MIA) will ask for it.\\
+\textbf{Reader takeaway:} ``the method has X\% bias and Y limits of agreement'' --- a clinically interpretable statement.
+
+\subsection*{Figure 9 --- Conservation diagnostics}
+\textbf{Content:} Plot of $Q(z)$ (cross-section flow rate) along the centreline, for CFD vs.\ PINN, with the percent deviation marked. Optionally, mass-balance error at the bifurcation as a bar chart.\\
+\textbf{Purpose:} a sanity-check figure showing that the reconstruction is physically consistent. Cheap to produce, very persuasive to reviewers.\\
+\textbf{Reader takeaway:} ``the PINN respects mass conservation to within X\% --- so it's not faking the velocity field.''
+
+\subsection*{Figure 10 --- The methodological-tweak ablation (Claim C3)}
+\textbf{Content:} A panel-grid showing how the reliable region in Figure 6 \emph{shifts} when you turn on the methodological tweak (RFF, or hard no-slip, or Bayesian). Either as overlaid contours, or as a difference heatmap, or as side-by-side panels.\\
+\textbf{Purpose:} the ablation that makes the paper a method, not just an evaluation.\\
+\textbf{Reader takeaway:} ``the tweak buys an extra X\% noise tolerance / Y mm of voxel size.''
+
+\subsection*{Optional Figure 11 --- Bayesian uncertainty calibration (Claim C4)}
+\textbf{Content:} Two panels. (a) Predicted standard deviation of $\tau_w$ on the wall surface (a heatmap on the geometry). (b) Calibration plot: empirical coverage vs.\ nominal credible level (the 50\% credible interval should contain the truth $\sim$50\% of the time).\\
+\textbf{Purpose:} closes Claim C4. Highly publishable on its own.\\
+\textbf{Reader takeaway:} ``the network not only predicts WSS but knows when it is uncertain; the uncertainty is calibrated.''
+
+\subsection*{Optional Figure 12 --- Failure-mode anatomy}
+\textbf{Content:} A few hand-picked extreme cases (very low SNR, very large voxels, a tortuous geometry) where the method visibly fails. Side-by-side maps with annotations pointing out exactly what fails and where.\\
+\textbf{Purpose:} demonstrates honesty and gives reviewers the failure characterisation they always ask for.\\
+\textbf{Reader takeaway:} ``the authors know the limits of their method.''
+
+\subsection*{Tables}
+\begin{itemize}[noitemsep]
+\item \textbf{Table 1: Methods, hyperparameters, training time.} Mirrors the source paper's Table~1; your reviewers expect it.
+\item \textbf{Table 2: Aggregate metrics across operating points.} A compact summary of NRMSE, R$^2$, peak-WSS error, mean-WSS error for your method and baselines.
+\item \textbf{Table 3: Computational cost.} CFD wall-clock vs.\ PINN training vs.\ PINN inference. The amortisation argument lives here.
+\end{itemize}
+
+\section{How figures map to claims}
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\textbf{Figure / Table} & \textbf{Supports} \\
+\midrule
+Fig.\ 1 (pipeline) & Orientation, no specific claim \\
+Fig.\ 2 (geometries) & Setup; supports geometry axis of C2 \\
+Fig.\ 3 (CFD truth) & Setup; defines what success means \\
+Fig.\ 4 (synthetic MRI) & Setup; defines noise/resolution axes \\
+Fig.\ 5 (WSS maps) & C1 \\
+Fig.\ 6 (sensitivity heatmaps) & \textbf{C2 (central)} \\
+Fig.\ 7 (profiles) & C1 \\
+Fig.\ 8 (Bland--Altman) & C1, clinical credibility \\
+Fig.\ 9 (conservation) & C1, physical consistency \\
+Fig.\ 10 (ablation) & \textbf{C3 (central)} \\
+Fig.\ 11 (uncertainty calibration) & \textbf{C4 (optional, central if included)} \\
+Fig.\ 12 (failure modes) & Honesty, sets up future work \\
+Tab.\ 1 (hyperparameters) & Reproducibility \\
+Tab.\ 2 (metrics summary) & C1, C3 \\
+Tab.\ 3 (cost) & Practical case for the method \\
+\bottomrule
+\end{tabularx}
+
+\section{Production tips that save weeks}
+
+\subsection*{Establish a figure template early}
+Define one matplotlib style file (\texttt{rcParams} dictionary) and one PyVista theme. Apply consistently. Cohesion across figures looks professional and is judged by reviewers (often unconsciously).
+
+\subsection*{Colour}
+Use a perceptually uniform colormap throughout (\texttt{viridis}, \texttt{magma}, \texttt{cividis}). Reserve a diverging colormap (\texttt{RdBu\_r}) for signed quantities (e.g.\ error). Avoid \texttt{jet}; reviewers will notice.
+
+\subsection*{Resolution and format}
+Save as PDF (vector) or 600\,dpi PNG. Avoid JPEG.
+
+\subsection*{Captions}
+A good caption is two sentences plus the metadata. First sentence: what the figure shows. Second: what the reader should conclude. Then the metadata (geometry, SNR, voxel size, training settings).
+
+Example: ``\textbf{Figure 6.} Sensitivity of WSS reconstruction error to voxel size and SNR, for the eccentric-stenosis geometry. The contour at NRMSE = 20\% delineates a reliable operating region; the PINN method extends this region by approximately 0.5\,mm in voxel size relative to the trilinear baseline. Error metric is volume-weighted NRMSE on the wall; each cell is the median over 5 random seeds.''
+
+\section{What to release alongside the paper}
+A modern paper in this space is judged partly by its release artefacts:
+\begin{itemize}[noitemsep]
+\item \textbf{Code:} GitHub repo with the PINN implementation, training scripts, evaluation pipeline, and figure-regeneration scripts. License: MIT or Apache 2.0.
+\item \textbf{Synthetic-MRI dataset:} the CFD fields, the synthetic-MRI inputs at every operating point, the ground-truth WSS maps. Zenodo or HuggingFace Datasets.
+\item \textbf{Pre-trained checkpoints:} for at least the headline operating points.
+\item \textbf{Reproducibility checklist:} either NeurIPS-style or the journal's own.
+\end{itemize}
+A clean release roughly doubles citation count in this field, and is essentially required by some venues now.
+
+\section{Sanity checks before submission}
+A pre-submission checklist:
+\begin{itemize}[noitemsep]
+\item Every figure has a clear single message.
+\item Each claim in the abstract is supported by a numbered figure or table.
+\item Failure modes are documented (Figure 12 or equivalent).
+\item Conservation diagnostics are reported.
+\item Bland--Altman or equivalent agreement metric is reported.
+\item Computational cost is reported and amortised.
+\item All hyperparameters are in a single table.
+\item Code, data, and checkpoints are tagged for release.
+\item Limitations are stated explicitly: rigid wall, Newtonian, idealised forward MRI operator (or whatever your assumptions are).
+\end{itemize}
+
+\end{document}

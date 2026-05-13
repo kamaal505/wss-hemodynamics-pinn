@@ -1,0 +1,137 @@
+# =============================================================================
+# hemodyn-pinn — Python dependencies
+# Install with: uv pip install -r requirements.txt
+#
+# Python >= 3.11 required throughout.
+#
+# !! IMPORTANT — FEniCSx (dolfinx) is NOT listed here !!
+# dolfinx has compiled C++ dependencies (PETSc, MPI, SLEPC) that pip/uv
+# cannot resolve from PyPI. Install it separately BEFORE this file:
+#
+#   Ubuntu/Debian (recommended):
+#     sudo add-apt-repository ppa:fenics-packages/fenics
+#     sudo apt update && sudo apt install fenicsx          # installs v0.10
+#
+#   macOS / other Linux (via conda-forge):
+#     conda install -c conda-forge fenics-dolfinx mpich
+#
+#   All other FEniCSx components (basix, ffcx, ufl) are pulled in
+#   automatically by the system package; do not pip-install them separately.
+#
+# gmsh's Python API IS pip-installable and is listed below.
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Core scientific stack
+# ---------------------------------------------------------------------------
+numpy>=1.26,<3.0
+scipy>=1.13
+
+
+# ---------------------------------------------------------------------------
+# Deep learning
+# ---------------------------------------------------------------------------
+# PyTorch 2.x — install the CUDA variant manually if on GPU:
+#   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# The CPU wheel is pulled here as a fallback; override for GPU workstations.
+torch>=2.3
+torchvision>=0.18          # needed only for GPU build matching; safe to keep
+
+
+# ---------------------------------------------------------------------------
+# Geometry, meshing, and 3-D post-processing
+# ---------------------------------------------------------------------------
+gmsh>=4.13                 # FEniCSx meshing companion; includes Python API
+meshio>=5.3                # mesh format conversion (XDMF ↔ VTK ↔ STL …)
+pyvista>=0.44              # 3-D visualisation and surface interrogation
+vtk>=9.3                   # pyvista backend
+
+
+# ---------------------------------------------------------------------------
+# Signed-distance field (SDF) computation for hard no-slip constraint
+# ---------------------------------------------------------------------------
+# igl (libigl Python bindings) provides fast winding-number SDF on triangle
+# meshes. The pip wheel bundles precompiled C++ so no system libs needed.
+libigl==2.5.0
+
+
+# ---------------------------------------------------------------------------
+# Synthetic MRI operator
+# ---------------------------------------------------------------------------
+# All SciPy / NumPy; no extra packages needed beyond the core stack.
+
+
+# ---------------------------------------------------------------------------
+# Experiment configuration and tracking
+# ---------------------------------------------------------------------------
+hydra-core>=1.3            # config composition and multirun sweeps
+omegaconf>=2.3             # Hydra's config backend; usually pulled transitively
+wandb>=0.19                # Weights & Biases experiment tracking
+
+
+# ---------------------------------------------------------------------------
+# Bayesian HPO (Phase 3 — reserved, safe to install now)
+# ---------------------------------------------------------------------------
+# Primary: scikit-optimize (GP-EI).  Maintained fork; the original repo is
+# dormant but the pip package (scikit-optimize 0.10) is stable.
+scikit-optimize>=0.10
+
+# Fallback / parallel search: Optuna with TPE and GP samplers.
+optuna>=4.7
+optuna-integration>=0.1    # W&B / PyTorch Lightning callbacks for Optuna
+
+# Optuna ↔ Hydra sweeper plugin (enables `hydra/sweeper=optuna` config):
+# DEFERRED TO PHASE 3. The latest stable release (1.2.0) caps Optuna at
+# <3.0, which conflicts with optuna>=4.7 above. A compatible version
+# (1.3.0.dev0+) exists as a pre-release only. Add it back at Phase 3 with:
+#   uv pip install hydra-optuna-sweeper --prerelease=allow
+# or pin to whatever stable release is available then.
+# hydra-optuna-sweeper>=1.2
+
+
+# ---------------------------------------------------------------------------
+# Evaluation and statistics
+# ---------------------------------------------------------------------------
+scikit-learn>=1.5          # metrics helpers, train/val splits
+pingouin>=0.5              # Bland–Altman, ICC, Pearson/Spearman one-liners
+
+
+# ---------------------------------------------------------------------------
+# Visualisation (2-D figures)
+# ---------------------------------------------------------------------------
+matplotlib>=3.9
+seaborn>=0.13
+# No jet colormaps are used anywhere in this project (see project conventions).
+
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+tqdm>=4.66                 # progress bars
+rich>=13.0                 # pretty console logging
+click>=8.1                 # CLI entry-points in scripts/
+h5py>=3.11                 # HDF5 I/O for CFD fields and checkpoints
+netcdf4>=1.7               # NetCDF I/O (optional CFD output format)
+
+
+# ---------------------------------------------------------------------------
+# Notebook / exploration (not required for scripts/)
+# ---------------------------------------------------------------------------
+jupyterlab>=4.2
+ipywidgets>=8.1
+ipyvtklink>=0.2            # PyVista ↔ Jupyter bridge
+
+
+# ---------------------------------------------------------------------------
+# Testing
+# ---------------------------------------------------------------------------
+pytest>=8.2
+pytest-cov>=5.0
+
+
+# ---------------------------------------------------------------------------
+# Code quality (dev only — not needed in CI unless you add linting steps)
+# ---------------------------------------------------------------------------
+ruff>=0.4                  # linting + formatting (replaces flake8 + black)
+mypy>=1.10,<2.0            # static type checking; cap below 2.x (large wheels)

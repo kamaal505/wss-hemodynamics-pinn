@@ -1,0 +1,74 @@
+# =============================================================================
+# hemodyn-pinn .gitignore
+# =============================================================================
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+MANIFEST
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Data (large; fetch/generate locally — see README §Data) ──────────────────
+# Geometry sources (git-cloned or manually downloaded — not committed)
+data/geometries/anxplore/
+data/geometries/vmr/
+data/geometries/idealised/
+# Generated data
+data/cfd/
+data/synthetic_mri/
+data/checkpoints/
+data/bhpo_runs/
+data/results/
+# Keep the directory skeleton via .gitkeep files if present
+!data/**/.gitkeep
+
+# ── Hydra outputs ─────────────────────────────────────────────────────────────
+outputs/
+multirun/
+
+# ── Weights & Biases ──────────────────────────────────────────────────────────
+wandb/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Testing / coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+
+# ── Type-checking / linting cache ─────────────────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+
+# ── IDE / editors ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── Claude Code (local session settings; project settings are committed) ──────
+.claude/settings.local.json

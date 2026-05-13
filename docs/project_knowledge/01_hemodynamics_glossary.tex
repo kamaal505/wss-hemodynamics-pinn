@@ -1,0 +1,222 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\titleformat{\section}{\large\bfseries\color{blue!40!black}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\title{\bfseries A Mathematician's Glossary of Hemodynamics\\[0.3em]
+\large Terms used in the Papadopoulos--Burganos paper, plus the additional vocabulary\\
+needed for a PINN-based WSS-from-4D-flow project}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{How to use this document}
+
+Each entry has three parts: a one-sentence \textbf{plain definition}, a \textbf{mathematical/physical statement} where applicable, and a brief \textbf{why-it-matters} note tied to your project. Entries are grouped, not alphabetised, so that related concepts sit together.
+
+\section{The vasculature: anatomical setting}
+
+\subsection*{Artery, arteriole, capillary, venule, vein}
+The five tiers of the vascular tree, in decreasing diameter order. Arteries (mm--cm) carry oxygenated blood from the heart; arterioles ($\sim 10$--$100\,\mu$m) regulate flow into capillary beds; capillaries ($\sim 5\,\mu$m) exchange gases and nutrients; venules and veins return blood. \textit{Project relevance:} the source paper studies an \emph{arteriole}; clinical 4D-flow MRI typically images \emph{arteries} (aorta, carotids, intracranials).
+
+\subsection*{Bifurcation}
+A point at which a parent vessel splits into two daughter branches. Geometrically characterised by the \emph{branching angle} and the \emph{daughter-to-parent diameter ratios}.
+
+\subsection*{Hess--Murray law (Murray's law)}
+A scaling rule for vascular trees: at a bifurcation,
+\[
+d_0^3 \;=\; d_1^3 + d_2^3,
+\]
+where $d_0$ is the parent diameter and $d_1, d_2$ the daughter diameters. Derived by minimising the sum of viscous dissipation and metabolic cost. \textit{Project relevance:} idealised geometries respect this law (your CFD test cases will use it); patient anatomies deviate from it, which becomes itself a source of geometric irregularity to study.
+
+\subsection*{Stenosis}
+A localised narrowing of a vessel, typically due to atherosclerotic plaque (in arteries) or other pathological remodelling. Quantified by \emph{stenosis severity} $s$, expressed as either a diameter reduction or an area reduction. Severity classifications (clinical):
+\begin{itemize}[noitemsep]
+  \item Mild: $s \lesssim 50\%$ diameter
+  \item Moderate: $50\%$--$70\%$
+  \item Severe: $\gtrsim 70\%$
+  \item Critical / clinical emergency: $\gtrsim 80\%$
+\end{itemize}
+
+\subsection*{Concentric vs.\ eccentric stenosis}
+A concentric stenosis is axisymmetric; an eccentric one narrows asymmetrically. Eccentric lesions produce more disturbed flow and are clinically harder to assess.
+
+\subsection*{Aneurysm}
+A localised ballooning (dilation) of a vessel. The opposite morphology of a stenosis. Saccular aneurysms (especially intracranial) are common targets for 4D-flow MRI studies.
+
+\subsection*{Endothelium / endothelial cells}
+The single-cell layer lining the inner vessel wall. Endothelial cells \emph{sense} mechanical stress (especially WSS) and respond biologically. The endothelium is the \emph{biological reason} WSS matters.
+
+\section{Flow-defining variables}
+
+\subsection*{Velocity field $\mathbf{u}(\mathbf{x},t)$}
+A vector-valued function returning fluid velocity at each spatial point and time. In 3D, $\mathbf{u} = (u, v, w)$. The primary unknown your network will reconstruct.
+
+\subsection*{Pressure field $p(\mathbf{x},t)$}
+Scalar field; static pressure. For incompressible flow, pressure plays the role of a Lagrange multiplier enforcing $\nabla\cdot\mathbf{u}=0$.
+
+\subsection*{Volumetric flow rate $Q$}
+The volume of fluid crossing a cross-section per unit time:
+\[
+Q \;=\; \int_A \mathbf{u}\cdot\hat{\mathbf{n}} \, dA.
+\]
+\textit{Project relevance:} mass conservation translates into $Q$ being constant along an unbranched vessel; it is a cheap, physically meaningful sanity check on any reconstruction.
+
+\subsection*{Reynolds number $\mathrm{Re}$}
+The dimensionless ratio $\mathrm{Re} = \rho U L / \mu$ comparing inertial to viscous forces, with $\rho$ the density, $\mu$ dynamic viscosity, $U$ a characteristic velocity, $L$ a characteristic length. \textit{Regimes:}
+\begin{itemize}[noitemsep]
+  \item $\mathrm{Re} \ll 1$: Stokes flow (linear, viscous-dominated). The source paper is here.
+  \item $\mathrm{Re} \sim 1$--$2000$: laminar.
+  \item $\mathrm{Re} \gtrsim 2000$ (in pipe-like geometry): transitional or turbulent.
+  \item Aortic peak systole: $\mathrm{Re}_{\text{peak}} \sim 4000$--$6000$.
+\end{itemize}
+
+\subsection*{Womersley number $\alpha$}
+Dimensionless group quantifying \emph{pulsatility}:
+\[
+\alpha \;=\; R\,\sqrt{\omega \rho / \mu},
+\]
+where $R$ is vessel radius and $\omega$ the angular frequency of the heartbeat ($\omega = 2\pi f$, $f \approx 1$\,Hz). $\alpha < 1$ means flow follows pressure quasi-statically (Poiseuille-like); $\alpha > 10$ means inertia dominates and velocity profiles flatten and develop annular peaks.
+
+\subsection*{Poiseuille (parabolic) profile}
+Steady, fully developed laminar flow in a long straight pipe has a parabolic velocity profile:
+\[
+u(r) = U_{\max}\!\left(1 - r^2/R^2\right), \qquad U_{\max} = 2\bar{U}.
+\]
+The benchmark profile shape; deviations from it indicate entrance effects, secondary flow, or pathology.
+
+\section{Wall mechanics: shear stress and derived metrics}
+
+\subsection*{Wall shear stress (WSS)}
+The tangential frictional force per unit area exerted by the flowing fluid on the vessel wall. For a Newtonian fluid:
+\[
+\boldsymbol{\tau}_w \;=\; \mu \, \big(\nabla \mathbf{u} + (\nabla\mathbf{u})^\top\big) \cdot \hat{\mathbf{n}}\Big|_{\text{wall, tangential component}}.
+\]
+The magnitude is $\tau_w = |\boldsymbol{\tau}_w|$ in pascals (Pa). For a parabolic pipe profile, $\tau_w = 4\mu \bar{U}/R$. \textit{Project relevance:} this is your headline output. It depends on the \emph{near-wall velocity gradient}, which is exactly the quantity 4D-flow MRI under-resolves.
+
+\subsection*{Time-averaged WSS (TAWSS)}
+Magnitude of WSS averaged over a cardiac cycle of period $T$:
+\[
+\mathrm{TAWSS} \;=\; \frac{1}{T}\int_0^T |\boldsymbol{\tau}_w(t)| \, dt.
+\]
+The standard scalar summary used in clinical papers. Low TAWSS ($\lesssim 0.4$\,Pa in arteries) is associated with atherogenesis.
+
+\subsection*{Oscillatory shear index (OSI)}
+Dimensionless measure of how much WSS changes direction over the cycle:
+\[
+\mathrm{OSI} \;=\; \frac{1}{2}\!\left( 1 - \frac{\big|\int_0^T \boldsymbol{\tau}_w \, dt\big|}{\int_0^T |\boldsymbol{\tau}_w| \, dt} \right) \in [0, 0.5].
+\]
+$\mathrm{OSI}=0$: unidirectional shear; $\mathrm{OSI}=0.5$: equal forward/backward shear. Elevated OSI co-localises with atherosclerotic lesions.
+
+\subsection*{Relative residence time (RRT)}
+\[
+\mathrm{RRT} \;\propto\; \frac{1}{(1 - 2\,\mathrm{OSI}) \cdot \mathrm{TAWSS}}.
+\]
+A combined indicator; long RRT $\Leftrightarrow$ stagnation-prone region.
+
+\subsection*{Pressure drop $\Delta P$}
+Static pressure difference between two points along the flow:
+\[
+\Delta P \;=\; p_1 - p_2.
+\]
+Across a stenosis, $\Delta P$ correlates with severity. \textit{Project relevance:} clinically, the \emph{pressure ratio} or \emph{fractional flow reserve (FFR)} across a coronary stenosis is the gold-standard decision-making metric.
+
+\subsection*{Fractional flow reserve (FFR)}
+$\mathrm{FFR} = P_d / P_a$, the ratio of distal to proximal pressure under maximum hyperaemia. $\mathrm{FFR} < 0.80$ is the clinical cutoff for revascularisation in coronary disease.
+
+\section{Imaging modalities}
+
+\subsection*{4D-flow MRI (a.k.a.\ phase-contrast MRI, PC-MRI, 3D cine PC-MRI)}
+Magnetic resonance imaging that encodes velocity into image phase. ``4D'' means three spatial dimensions plus time across the cardiac cycle. Outputs: a 3D + time velocity field $\mathbf{u}_{\text{MRI}}(\mathbf{x}, t)$ on a Cartesian voxel grid covering the imaged volume.
+
+Typical specifications:
+\begin{itemize}[noitemsep]
+  \item Voxel size: 1.5--3.0\,mm isotropic (sometimes down to 0.7\,mm with long scans).
+  \item Temporal resolution: 30--60\,ms per phase; 20--30 phases per cycle.
+  \item Velocity-to-noise ratio (VNR): typically 5--15 in well-acquired studies.
+  \item Encoding velocity (VENC): user-set upper limit; velocities exceeding VENC \emph{alias} (wrap around).
+\end{itemize}
+
+\subsection*{Velocity encoding (VENC) and aliasing}
+4D-flow encodes velocity as phase modulo $2\pi$. If the true velocity exceeds VENC, the measured velocity wraps: $u_{\text{measured}} = u_{\text{true}} - 2\,\mathrm{VENC}\cdot\mathrm{round}(u_{\text{true}}/(2\,\mathrm{VENC}))$. \textit{Project relevance:} aliasing is one of the artefact axes you may want to study (in addition to noise).
+
+\subsection*{Velocity-to-noise ratio (VNR), signal-to-noise ratio (SNR)}
+$\mathrm{VNR} = \mathrm{VENC}/\sigma_v$, where $\sigma_v$ is the standard deviation of velocity noise. In synthetic-MRI generation you set $\sigma_v$ directly. \textit{Project relevance:} this is one of your three sweep axes.
+
+\subsection*{Partial-volume effect}
+At voxels straddling the vessel wall, a single voxel contains both blood and surrounding tissue, biasing the measured velocity downward. \textit{Project relevance:} this is the dominant systematic source of WSS underestimation by 4D-flow.
+
+\subsection*{Displacement artefact}
+During the finite encoding time, fast-flowing fluid translates within the voxel grid; the recorded velocity is therefore associated with a slightly displaced location. Significant near walls and in stenotic jets.
+
+\subsection*{Computed tomography angiography (CTA), magnetic resonance angiography (MRA), time-of-flight MRI (ToF-MRI)}
+Imaging modalities that produce a 3D \emph{geometric} (not velocity) picture of the vasculature. Used to obtain the wall geometry against which 4D-flow velocities and PINN reconstructions are evaluated.
+
+\subsection*{Particle image velocimetry (PIV)}
+Optical, in-vitro technique used to validate CFD or 4D-flow against a phantom (silicone replica of a vessel). Considered the highest-fidelity \emph{experimental} reference. Mostly out of scope for your synthetic-data project but appears in baselines.
+
+\section{Numerical and modelling concepts}
+
+\subsection*{Computational fluid dynamics (CFD)}
+The numerical solution of the governing equations of fluid mechanics on a discretised geometry. In your project, CFD is the \emph{ground truth} from which you generate synthetic 4D-flow.
+
+\subsection*{Patient-specific modelling}
+A CFD pipeline where the geometry is segmented from a patient's medical imaging and personalised boundary conditions are imposed. Contrasted with idealised models (cylinders, parametric stenoses).
+
+\subsection*{Boundary conditions: inlet, outlet, no-slip wall}
+\begin{itemize}[noitemsep]
+  \item \emph{Inlet:} prescribed velocity profile (plug, parabolic, or measured) or prescribed flow rate.
+  \item \emph{Outlet:} prescribed pressure (commonly zero gauge), prescribed traction, or a lumped-parameter (Windkessel / RCR) model representing downstream resistance.
+  \item \emph{Wall:} no-slip ($\mathbf{u} = \mathbf{0}$) for rigid walls; deformable walls require fluid-structure interaction (FSI).
+\end{itemize}
+
+\subsection*{Windkessel / RCR model}
+A 0D lumped-parameter model representing the vasculature downstream of a CFD outlet as a circuit of resistance--compliance--resistance (or simpler RC). Provides a physiologically realistic outflow boundary condition.
+
+\subsection*{Newtonian vs.\ non-Newtonian (Carreau, Casson, Cross, Quemada)}
+\emph{Newtonian:} viscosity $\mu$ constant. Reasonable in large arteries at high shear. \emph{Non-Newtonian:} $\mu = \mu(\dot\gamma)$ depends on local shear rate $\dot\gamma$. Blood is shear-thinning. Relevant in microvasculature, stagnation zones, and at low shear rates. The most common models are Carreau, Casson, Cross, and Quemada.
+
+\subsection*{Fluid-structure interaction (FSI)}
+Coupled simulation in which fluid forces deform the wall and wall motion feeds back into the flow. More realistic, much more expensive. Out of scope for a first paper; usually noted as a limitation.
+
+\section{Disease context (clinical \emph{why} the problem matters)}
+
+\subsection*{Atherosclerosis}
+Chronic disease characterised by plaque buildup in the arterial intima. The leading cause of myocardial infarction and stroke. WSS is mechanistically implicated: \emph{low and oscillatory} WSS promotes endothelial dysfunction and plaque deposition.
+
+\subsection*{Cerebrovascular accident (stroke), aneurysm rupture}
+The endpoints WSS-based risk stratification aims to predict.
+
+\subsection*{Risk stratification}
+The clinical task of assigning a patient (or anatomical site) a probability of an adverse event, used to decide on treatment intensity. ``Hemodynamic biomarkers'' (TAWSS, OSI, peak velocity) are candidate inputs to stratification; \emph{their reliability is the clinical motivation for your project.}
+
+\section{Statistical / agreement metrics used in clinical papers}
+
+\subsection*{Bland--Altman analysis}
+Plot the difference between two measurement methods (Method A $-$ Method B) against their mean. Reports the \emph{bias} (mean difference) and \emph{limits of agreement} (mean $\pm 1.96\sigma$). Standard in clinical-method-comparison papers; you should plan to produce these.
+
+\subsection*{Pearson and Spearman correlation, intraclass correlation coefficient (ICC)}
+Standard agreement metrics. ICC is preferred when comparing absolute values across subjects.
+
+\subsection*{Dice similarity coefficient, Hausdorff distance}
+Used for segmentation evaluation when wall geometry must be inferred. Mostly in image-processing baselines you compare against.
+
+\section*{Quick reference card}
+\begin{itemize}[noitemsep]
+\item Velocity $\mathbf{u}$ (m/s); pressure $p$ (Pa); WSS $\tau_w$ (Pa); flow rate $Q$ (m$^3$/s).
+\item Blood density $\rho \approx 1060$\,kg/m$^3$; viscosity $\mu \approx 3.5 \times 10^{-3}$\,Pa$\cdot$s (Newtonian estimate).
+\item Aortic peak velocity: $\sim 1$\,m/s; aortic diameter: $\sim 25$\,mm; aortic Re$_\text{peak}$: $\sim 5000$.
+\item Cerebral artery (e.g.\ MCA) velocity: $\sim 0.5$\,m/s; diameter: $\sim 3$\,mm.
+\item Healthy aortic TAWSS: $\sim 0.5$--$2$\,Pa; aneurysmal TAWSS: often $< 0.4$\,Pa.
+\item 4D-flow voxel: 1.5--3\,mm; this is comparable to vessel radius in many small arteries --- which is precisely why near-wall recovery is hard.
+\end{itemize}
+
+\end{document}

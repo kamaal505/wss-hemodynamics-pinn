@@ -1,0 +1,27 @@
+# PINN with Random Fourier Features encoder (ablation variant).
+# Inherits all training defaults; only the architecture differs.
+# See doc 03 §3 and Tancik et al. 2020.
+# Practical defaults: D=128-256, sigma tuned in {1, 2, 5, 10}.
+
+# @package _global_
+
+model:
+  n_hidden: 128
+  n_layers: 4
+  use_rff: true
+  rff_features: 128    # D: number of RFF frequency samples; output dim = 2D
+  rff_sigma: 2.0       # bandwidth sigma; tune in {1, 2, 5, 10}
+
+training:
+  n_colloc: 10000
+  n_wall_bc: 2000
+  n_adam: 50000
+  n_lbfgs: 5000
+  lr_adam: 1.0e-3
+  lr_lbfgs: 1.0
+  lambda_data: 1.0
+  lambda_phys: 1.0
+  lambda_bc: 10.0
+  lambda_anchor: 10.0
+  checkpoint_every: 1000
+  device: "cpu"

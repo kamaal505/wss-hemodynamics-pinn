@@ -1,0 +1,183 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\titleformat{\section}{\large\bfseries\color{blue!40!black}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\title{\bfseries Interpreting Results: From Numbers to Real-World Contribution\\[0.3em]
+\large How to read what your analyses say, and how to argue that the work matters}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{The interpretive task}
+You will produce a lot of numbers. Mathematicians are tempted to report them all, leaving the reader to draw conclusions. \emph{This is a publication-killing habit in applied ML.} The reader needs you to translate numbers into claims, and claims into clinical or scientific contribution. This document gives you the framework for doing that.
+
+\section{The five layers of interpretation}
+
+For any quantitative result, ask the following five questions in order:
+
+\begin{enumerate}
+\item \textbf{What does the metric say literally?} (e.g.\ NRMSE = 0.05)
+\item \textbf{Is the metric appropriate?} (would a clinician care about this metric, or about something else like peak-WSS error?)
+\item \textbf{What does this metric translate to physically?} (5\% RMS error in WSS in absolute Pa terms; comparison to inter-patient variability)
+\item \textbf{What does this enable, clinically or scientifically?} (acceptable for screening; not yet acceptable for surgical planning)
+\item \textbf{What are the caveats?} (this regime; this geometry; this noise model)
+\end{enumerate}
+
+\textbf{Every interpretation in your paper should walk these five rungs.} If you stop at rung 1, the paper feels disconnected from the world. If you skip to rung 4, you've over-claimed.
+
+\section{Interpretation by metric}
+
+\subsection*{NRMSE on velocity}
+\textbf{Literal:} the RMS error normalised by the RMS of the truth, often expressed as a percentage.\\
+\textbf{Appropriate?} For the velocity field as a whole, yes. For WSS specifically, no --- WSS depends on derivatives, so a low velocity NRMSE does not imply a low WSS error.\\
+\textbf{Physical translation:} NRMSE 5\% on a peak velocity of 1\,m/s is roughly 5\,cm/s error --- comparable to the noise floor of well-acquired clinical 4D-flow.\\
+\textbf{What it enables:} cohort-level summary metrics; flow-rate computation.\\
+\textbf{Caveat:} \emph{always} report a derivative-sensitive companion metric (WSS error or near-wall NRMSE).
+
+\subsection*{$R^2$ coefficient of determination}
+\textbf{Literal:} fraction of variance explained.\\
+\textbf{Appropriate?} Useful as a one-number summary but \emph{misleading at high values}. The source paper reports $R^2 \geq 0.997$ on velocity components but still has WSS errors. $R^2$ near 1 means the gross structure is right; it says little about steep gradients.\\
+\textbf{What it enables:} reassurance that nothing is catastrophically wrong.\\
+\textbf{Caveat:} treat as a sanity check, never as a headline.
+
+\subsection*{Pointwise relative error in WSS}
+\textbf{Literal:} $|\tau_w^{\text{pred}} - \tau_w^{\text{true}}|/\tau_w^{\text{true}}$ at each wall point.\\
+\textbf{Appropriate?} Yes --- this is the real headline.\\
+\textbf{Physical translation:} 20\% relative error in mean aortic TAWSS ($\sim 1$\,Pa) is about 0.2\,Pa, which is roughly the inter-patient natural variability. So 20\% error is at the edge of clinical usefulness; 50\% is not.\\
+\textbf{What it enables:} ranked: $<10\%$ enables risk-stratification research; 10--20\% enables population-level studies; 20--40\% enables only qualitative pattern recognition; $>40\%$ is essentially noise.\\
+\textbf{Caveat:} relative error blows up where $\tau_w \to 0$ (recirculation, stagnation). Always also report the absolute error in Pa.
+
+\subsection*{Peak WSS error}
+\textbf{Literal:} the difference in maximum WSS over the surface.\\
+\textbf{Appropriate?} Critically yes for stenoses (peak-WSS region is the rupture-relevant location); critically yes for aneurysms (peak-WSS predicts wall remodelling).\\
+\textbf{Physical translation:} a peak-WSS error of 30\% understates plaque-rupture risk by an unknown but physiologically important amount.\\
+\textbf{What it enables:} a low peak-WSS error is a strong specific claim and reads well in a clinical bridge journal.\\
+\textbf{Caveat:} peak is a fragile statistic. Report also a high quantile (e.g.\ 95th percentile) which is more stable.
+
+\subsection*{Mean WSS error / TAWSS error}
+\textbf{Literal:} aggregate over wall surface.\\
+\textbf{Appropriate?} Yes for atherogenesis-related applications (low TAWSS regions matter).\\
+\textbf{Physical translation:} 0.1\,Pa is comparable to clinical 4D-flow precision; 0.5\,Pa is well above natural noise.\\
+\textbf{What it enables:} statements about the magnitude of clinical bias.\\
+\textbf{Caveat:} averaging hides regional pathology. Always pair with a regional analysis (Bland--Altman, surface error map).
+
+\subsection*{Bland--Altman bias and limits of agreement}
+\textbf{Literal:} systematic offset (bias) and 95\% spread (limits of agreement, LoA).\\
+\textbf{Appropriate?} The most clinically literate scalar pair you can report.\\
+\textbf{Physical translation:} a bias of $-0.15$\,Pa with LoA $[-0.6, 0.3]$ Pa on TAWSS means: ``on average we under-estimate by 0.15\,Pa, but in the worst 2.5\% of cases we under-estimate by 0.6 or over-estimate by 0.3.''\\
+\textbf{What it enables:} direct comparability with the clinical 4D-flow-vs-CFD literature, where Bland--Altman is the lingua franca.\\
+\textbf{Caveat:} requires sufficiently many comparison points (per-vertex; or per-region across geometries).
+
+\subsection*{Conservation residuals (mass, momentum)}
+\textbf{Literal:} the deviation of the trained network from $\nabla\cdot\mathbf{u} = 0$ or from cross-section flow-rate constancy.\\
+\textbf{Appropriate?} Always report. Cheap to compute, hard to fake.\\
+\textbf{Physical translation:} 1\% deviation = the network does not conserve mass perfectly but is well within noise. 10\% = the network is exploiting the loss function in non-physical ways and the velocity field is suspect.\\
+\textbf{What it enables:} reviewer trust.\\
+\textbf{Caveat:} a network can have small residuals and still be wrong; conservation is necessary, not sufficient.
+
+\subsection*{Computational time}
+\textbf{Literal:} CFD vs.\ PINN training vs.\ PINN inference, all in wall-clock seconds.\\
+\textbf{Appropriate?} Yes, but the comparison must be \emph{fair}. CFD runs once per case; PINN trains once per case (or once per family). State the amortisation explicitly.\\
+\textbf{Physical translation:} ``CFD takes 2 hours per case; PINN training 30 min per case; PINN inference 10 ms per query. For workflows with $>10$ queries per geometry, PINN inference dominates.''\\
+\textbf{What it enables:} the ``why this matters in practice'' argument.\\
+\textbf{Caveat:} training time is a real cost --- don't bury it in a footnote.
+
+\section{Interpreting the central artefact: the (voxel size, SNR) phase diagram}
+
+This is your central claim. The figure is a 2D heatmap; your job is to extract three or four headline numbers from it.
+
+\subsection*{The reliable region}
+Define a threshold (e.g.\ NRMSE on $\tau_w$ < 20\%, or peak-WSS error $< 25\%$) and report the largest voxel size at each SNR level inside the reliable region. The result is a curve in the (voxel, SNR) plane. \emph{This curve is the answer to ``how good must MRI be to make WSS recovery via PINN reliable?''} --- the question your paper is for.
+
+\subsection*{Comparison to clinical 4D-flow specifications}
+Position the typical clinical operating point on the diagram (voxel 1.5--2.5\,mm; VNR 5--15). Is it inside or outside the reliable region? Honest answers in either direction make a paper.
+
+\textbf{If outside:} ``current clinical 4D-flow does not reliably support PINN-based WSS recovery for this geometry class; we identify the resolution/SNR target needed.''\\
+\textbf{If inside:} ``current clinical 4D-flow specifications are sufficient for reliable PINN-based WSS recovery in this geometry class.''\\
+\textbf{Mixed:} ``the boundary cuts through the clinical operating range; we identify the geometry-specific minimum specification.''
+
+\subsection*{Methodological-tweak shift}
+With your tweak (RFF, hard no-slip, Bayesian) on, the reliable region expands or shifts. Quantify: ``the tweak buys $\Delta$\,mm of voxel size at SNR = 10'' or ``at clinical operating point X, the WSS error drops from Y\% to Z\%.''
+
+\subsection*{Geometry sensitivity}
+Compare the boundary across the three geometries. Is concentric stenosis easier than eccentric? Are bifurcations harder than straight stenoses? \emph{The geometry-by-geometry differences are themselves a contribution.}
+
+\section{Interpreting Bayesian uncertainty (if you go this route)}
+
+\subsection*{Calibration}
+Plot empirical coverage vs.\ nominal credible level. If your model says ``80\% credible interval'' and 80\% of true values are inside it, you are calibrated. Deviations:
+\begin{itemize}[noitemsep]
+\item \textbf{Over-confident:} 80\% interval contains only 50\% --- the model under-estimates uncertainty. Common pathology; clinically dangerous.
+\item \textbf{Under-confident:} 80\% interval contains 95\% --- conservative; safe but uninformative.
+\item \textbf{Roughly calibrated:} on diagonal $\pm$10\%. Acceptable.
+\end{itemize}
+
+\subsection*{Spatial structure of uncertainty}
+The uncertainty map should show \emph{high} variance in the regions where you'd expect failure: near the wall, in recirculation zones, at the throat. If it doesn't, your model is over-confident in problematic regions and you should say so.
+
+\subsection*{Correlation with truth error}
+Compute the correlation between predicted standard deviation and actual error magnitude over wall points. A high correlation ($\rho \gtrsim 0.5$) is the strong claim: ``where the model says it's uncertain, it actually is wrong.''
+
+\section{Demonstrating real-world contribution}
+
+The paper succeeds if you can answer, in a single paragraph, the question: \emph{what could a clinician or applied scientist do tomorrow that they could not do today, because of this paper?} Your candidate answers, ranked by strength:
+
+\subsection*{The strongest claim: an MRI specification recipe}
+``A 4D-flow MRI acquisition with voxel $\leq 1.5$\,mm and VNR $\geq 10$ on a stenosed carotid is sufficient to recover TAWSS to within 15\% of CFD; this enables retrospective TAWSS analysis of existing 4D-flow studies and provides design targets for new acquisitions.'' This is concrete, falsifiable, and useful.
+
+\subsection*{The methods claim}
+``We provide an open implementation of a PINN-based WSS estimator that matches or beats existing 4D-flow WSS extraction methods (PaLMA, divergence-free smoothing) on benchmark synthetic cases.'' This claim becomes stronger if your code is genuinely reusable.
+
+\subsection*{The benchmark claim}
+``We release a benchmark of CFD ground truth + synthetic 4D-flow at controlled operating points; future methods can be compared on a common task.'' This is how the broader community gets pulled in. Highly leverageable.
+
+\subsection*{The mathematical claim (if you take Problem 1 from the strategy doc on board)}
+``We show that Fourier-feature embedding shifts the reliable region in a quantifiable way; the bandwidth $\sigma$ should be tuned to the voxel scale.'' This is the closest thing to a theorem you'll get; rigorous justification (NTK-based or otherwise) makes it a real contribution.
+
+\subsection*{The honest-limits claim}
+``We characterise the regime where PINN-based WSS recovery is currently \emph{not} reliable, and identify three failure modes.'' This sounds modest but is unusually valuable because the field tends to oversell.
+
+\section{Structuring the discussion section}
+
+The Discussion is where the interpretation lives. Recommended structure:
+
+\paragraph{Paragraph 1 --- Restate the principal findings.} Concrete numbers from the headline figures. Three sentences max. Tie to the headline claims C1--C4.
+
+\paragraph{Paragraph 2 --- Comparison to prior work.} Position your operating-point characterisation against Arzani 2021, Fathi 2020, IP-PINN 2024, and the non-PINN WSS methods (PaLMA, PG-VGC). Be specific about what's new (the systematic sweep, the benchmark, the tweak ablation).
+
+\paragraph{Paragraph 3 --- Clinical implications.} Translate the phase diagram into language a clinical 4D-flow user would recognise. Specify acquisition parameters. State which clinical questions this enables (e.g.\ atherogenesis-prone region screening, longitudinal aneurysm monitoring).
+
+\paragraph{Paragraph 4 --- Methodological insight.} Why does the tweak help? Connect to the spectral-bias / NTK story. Mathematicians: this is the part you'll find natural.
+
+\paragraph{Paragraph 5 --- Failure modes and limitations.} Be specific. Examples: ``WSS recovery fails in geometries with surface roughness amplitude $>X\%$ of vessel radius;'' ``the synthetic forward operator does not include displacement artefacts which may further bias real-MRI applications;'' ``rigid wall assumption excludes pulsatile-FSI effects.'' Naming limitations protects you from reviewer attack.
+
+\paragraph{Paragraph 6 --- Future work.} Three concrete directions. Pulsatile (Womersley) extension, FSI, patient-specific cohort study. Don't list six --- list three you'd actually pursue.
+
+\section{The cardinal sin of result interpretation in this field}
+
+Reporting an extremely low NRMSE on velocity, claiming ``high accuracy,'' and never showing the WSS map. The source paper itself avoids this trap (it shows centreline and radial profiles), but many do not. Your reviewers will. Do not.
+
+\section*{Self-check: before claiming contribution, ask}
+\begin{itemize}[noitemsep]
+\item Have I shown my method works (Figure 5: WSS maps)?
+\item Have I shown when it works and when it doesn't (Figure 6: phase diagram)?
+\item Have I quantified physical consistency (Figure 9: conservation)?
+\item Have I shown calibrated uncertainty or admitted I haven't (Figure 11)?
+\item Have I made a falsifiable claim about an acquisition specification?
+\item Have I named at least three honest limitations?
+\item Have I released code and data?
+\end{itemize}
+If yes to all, you have a paper. If no to any, fix that before submitting.
+
+\end{document}

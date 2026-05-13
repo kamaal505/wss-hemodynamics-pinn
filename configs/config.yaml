@@ -1,0 +1,17 @@
+# Main Hydra config.  Override from the CLI, e.g.:
+#   python scripts/02_run_cfd.py geometry=caseA cfd=stokes_default
+
+defaults:
+  - geometry: caseA
+  - cfd: stokes_default
+  - mri: voxel_1p0mm
+  - model: pinn_base
+  - _self_
+
+# Project root (resolved by the script itself; kept here for documentation).
+project_root: ${hydra:runtime.cwd}
+
+output:
+  base_dir: data/cfd
+  mri_base_dir: data/synthetic_mri
+  pinn_base_dir: data/checkpoints

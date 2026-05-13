@@ -1,0 +1,4 @@
+# @package geometry
+case_id: caseB
+vtk_path: data/geometries/anxplore/caseB/Fluid_caseB.vtk
+# z-span 6.385 mm — deepest aneurysm bulge; most complex geometry

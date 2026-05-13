@@ -1,0 +1,14 @@
+# Steady Stokes solver configuration.
+# Physical parameters calibrated for Re << 1 (see CLAUDE.md §6).
+
+# @package cfd
+
+mu: 3.5e-3          # Pa·s  Newtonian blood viscosity
+u_inlet: 2.0e-5     # m/s   inlet normal velocity  → Re ≈ 0.10
+
+# PETSc linear solver — MUMPS direct solver (handles pressure nullspace).
+petsc_ksp_type: preonly
+petsc_pc_type: lu
+petsc_pc_solver: mumps
+
+save_vtk: false     # set true to also write a .vtu file

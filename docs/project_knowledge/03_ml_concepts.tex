@@ -1,0 +1,256 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{listings}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\titleformat{\section}{\large\bfseries\color{blue!40!black}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\definecolor{codebg}{RGB}{248,248,245}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framerule=0pt,
+  rulecolor=\color{codebg},
+  breaklines=true,
+  language=Python,
+}
+
+\title{\bfseries Machine Learning Concepts for the WSS-from-MRI PINN Project\\[0.3em]
+\large What you need to know, what you'll actually build, and what the alternatives look like}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{How to read this document}
+This document assumes you are mathematicians comfortable with optimisation theory, linear algebra, and PDE analysis, but treating ML as a new field. The concepts are presented in the order you will encounter them when building the project. Each section ends with a \textbf{do/don't} synthesis.
+
+\section{Neural networks as function approximators}
+
+A feed-forward neural network with $L$ layers is a parameterised function $f_\theta: \mathbb{R}^{d_{\text{in}}} \to \mathbb{R}^{d_{\text{out}}}$ defined by
+\[
+\mathbf{h}_0 = \mathbf{x}, \qquad
+\mathbf{h}_\ell = \phi(W_\ell \mathbf{h}_{\ell-1} + \mathbf{b}_\ell), \quad \ell = 1,\dots,L-1, \qquad
+f_\theta(\mathbf{x}) = W_L \mathbf{h}_{L-1} + \mathbf{b}_L,
+\]
+with weights $W_\ell$, biases $\mathbf{b}_\ell$, activation $\phi$, and parameters $\theta = \{W_\ell, \mathbf{b}_\ell\}$.
+
+\subsection*{Universal approximation}
+A network with one hidden layer and a non-polynomial activation can approximate any continuous function on a compact set arbitrarily well (Cybenko 1989, Hornik 1991). Mostly a sanity check; actual performance is governed by depth, width, and \emph{trainability}.
+
+\subsection*{Activations}
+\begin{itemize}[noitemsep]
+\item \textbf{ReLU} $\phi(z) = \max(0,z)$: standard, fast, but piecewise-linear (so $f_\theta$ has zero curvature almost everywhere --- bad for PINNs that need second derivatives).
+\item \textbf{Tanh}, \textbf{GELU}, \textbf{Swish}: smooth alternatives. \textbf{Tanh is the default for PINNs} because it's smooth, bounded, and well-conditioned for autograd.
+\item \textbf{SIREN} $\phi(z) = \sin(z)$: periodic activations; very strong at high-frequency representation but needs careful initialisation.
+\end{itemize}
+
+\subsection*{The MLP backbone you'll use}
+A typical PINN backbone for vascular flow:
+\begin{itemize}[noitemsep]
+\item Input dimension: 3 (or 4 with time, or 5 with parameters).
+\item 3--6 hidden layers, 64--256 neurons each.
+\item Tanh activation.
+\item Output dimension: 3 velocity components (and optionally 1 pressure component).
+\end{itemize}
+
+\textbf{Do:} start with the smallest network that fits the training data; only deepen if necessary.\\
+\textbf{Don't:} use ReLU. The PDE residual involves $\partial_i u_j$ and $\partial^2_{ii} u_j$; ReLU's lack of curvature breaks the second-derivative term in the loss.
+
+\section{Coordinate-based / implicit neural representations}
+
+A coordinate network is just an MLP whose input is a spatial coordinate (and possibly time) and whose output is a field value. The point is that you query the network at \emph{any} point, not at fixed grid nodes. This is the right frame for vascular flow: arbitrary 3D query, no mesh.
+
+\textit{Examples:} NeRF (3D scenes), DeepSDF (signed distance fields), and PINNs in their basic form.
+
+\subsection*{Spectral bias}
+Coordinate networks with smooth activations have an implicit \emph{low-frequency bias}: they learn smooth functions easily and high-frequency detail slowly (Rahaman et al.\ 2019, Tancik et al.\ 2020, Wang \& Perdikaris on the eigenvector bias in PINNs). The neural tangent kernel (NTK) analysis makes this precise: training reduces error in the directions of the largest NTK eigenvalues first, which correspond to low-frequency modes.
+
+\textit{Project relevance:} the failure of vanilla PINNs near the wall is partly spectral bias --- the wall gradient is a high-frequency feature relative to the bulk flow. Mitigations matter.
+
+\section{Random Fourier features (RFF) / positional encodings}
+
+Replace the raw coordinate $\mathbf{r} = (x,y,z)$ with the embedded vector
+\[
+\boldsymbol{\phi}(\mathbf{r}) = \big[\sin(2\pi B\mathbf{r}),\;\cos(2\pi B\mathbf{r})\big] \in \mathbb{R}^{2D},
+\]
+where $B \in \mathbb{R}^{D\times 3}$ has entries $B_{ij}\sim \mathcal{N}(0,\sigma^2)$. The bandwidth $\sigma$ controls the highest frequency the network can represent. By Bochner's theorem, this is a finite-dimensional approximation to a Gaussian RBF kernel.
+
+\textit{Project relevance:} this is the trick the source paper uses; it is also a candidate methodological tweak to your own work. The hyperparameters are $D$ (number of features) and $\sigma$ (bandwidth). Practical defaults: $D = 64$--$256$, $\sigma$ tuned in $\{1, 2, 5, 10\}$.
+
+\textbf{Do:} include an RFF ablation in your paper.\\
+\textbf{Don't:} apply RFF to non-spatial inputs (parameters like Re, $\sigma_v$); use raw values for those.
+
+\section{Physics-informed neural networks (PINNs): the framework}
+
+\subsection*{The unified loss}
+A PINN trains $\mathbf{u}_\theta(\mathbf{x}, t)$ (and optionally $p_\theta$) by minimising a composite loss
+\begin{equation}
+\mathcal{L}(\theta) = \lambda_{\text{data}}\,\mathcal{L}_{\text{data}}(\theta) + \lambda_{\text{phys}}\,\mathcal{L}_{\text{phys}}(\theta) + \lambda_{\text{bc}}\,\mathcal{L}_{\text{bc}}(\theta),
+\label{eq:PINNloss}
+\end{equation}
+where each term is a mean-squared error:
+\begin{align*}
+\mathcal{L}_{\text{data}} &= \frac{1}{N_d}\sum_{i=1}^{N_d}\|\mathbf{u}_\theta(\mathbf{x}_i, t_i) - \mathbf{u}_i^{\text{obs}}\|^2 && \text{(observation fit)}\\
+\mathcal{L}_{\text{phys}} &= \frac{1}{N_r}\sum_{j=1}^{N_r}\|\mathbf{R}_{\text{NS}}(\mathbf{u}_\theta, p_\theta)(\mathbf{x}_j, t_j)\|^2 + \frac{1}{N_r}\sum_{j=1}^{N_r}|\nabla\cdot\mathbf{u}_\theta(\mathbf{x}_j,t_j)|^2 && \text{(PDE residual)}\\
+\mathcal{L}_{\text{bc}} &= \frac{1}{N_b}\sum_{k=1}^{N_b}\|\mathbf{u}_\theta(\mathbf{x}_k^w, t_k) - \mathbf{0}\|^2 && \text{(no-slip)}
+\end{align*}
+The PDE residual $\mathbf{R}_{\text{NS}}$ is computed by autograd: the network's output is differentiated with respect to its input.
+
+\subsection*{Collocation points}
+The residual is enforced at a set of \emph{collocation points} $\{\mathbf{x}_j\}$ sampled from the interior of $\Omega$. Sampling can be uniform random, Latin hypercube, importance-sampled (more density near walls / stenoses), or adaptive (residual-based).
+
+\textbf{Do:} use $\sim 10^4$--$10^5$ collocation points per epoch; resample each epoch.\\
+\textbf{Don't:} fix collocation points across epochs --- it lets the network ``cheat'' by overfitting on those.
+
+\subsection*{Loss balancing}
+The loss weights $\lambda_{\text{data}}, \lambda_{\text{phys}}, \lambda_{\text{bc}}$ are crucial. Choices range from manual tuning to learned (Wang--Teng--Perdikaris) and gradient-norm-based (Wang \emph{et al.}). Default to manual at first, then add adaptive balancing in an ablation.
+
+\subsection*{Hard vs.\ soft constraints}
+Boundary conditions can be \emph{soft} (added to the loss) or \emph{hard} (baked into the architecture). For instance, write
+\[
+\mathbf{u}_\theta(\mathbf{x}) = \psi(\mathbf{x}) \cdot \mathbf{N}_\theta(\mathbf{x}),
+\]
+where $\psi(\mathbf{x})$ is a smooth function vanishing on the wall (e.g.\ a signed-distance function $\psi(\mathbf{x}) = \mathrm{SDF}(\mathbf{x})$ inside the lumen). This guarantees no-slip exactly. Hard constraints often improve training stability and accuracy, especially in your problem because WSS recovery hinges on respecting no-slip.
+
+\textit{Project relevance:} hard no-slip constraint via SDF is one of your candidate methodological tweaks.
+
+\section{Inverse problems and data assimilation with PINNs}
+
+Your problem is an inverse problem: the network is fit to noisy observations \emph{plus} the physics. The data term plays the role of a likelihood, the physics term plays the role of a regulariser, and the network parameters play the role of a high-dimensional latent state.
+
+\subsection*{Connection to Tikhonov regularisation}
+For a linear inverse problem $A\mathbf{u} = \mathbf{d}$ with noisy $\mathbf{d}$, the Tikhonov solution minimises $\|A\mathbf{u} - \mathbf{d}\|^2 + \lambda\|R\mathbf{u}\|^2$. The PINN loss \eqref{eq:PINNloss} is the same shape with $A$ being ``evaluate $\mathbf{u}_\theta$ at observation locations'' and $R$ being the PDE operator. The regularisation strength is $\lambda_{\text{phys}}/\lambda_{\text{data}}$.
+
+\subsection*{Bayesian PINNs (B-PINNs)}
+Treat $\theta$ as random. Posterior $p(\theta | \mathbf{d}) \propto p(\mathbf{d}|\theta)\,p(\theta)$ where the likelihood is the data term and the prior includes the PDE residual. Sample via Hamiltonian Monte Carlo (slow) or use a variational approximation (faster, e.g.\ MFVI, mean-field variational inference). Yang--Meng--Karniadakis 2021 is the canonical reference. Output: a distribution over $\mathbf{u}_\theta$, hence over $\boldsymbol{\tau}_w$, hence \emph{calibrated uncertainty maps}.
+
+\textit{Project relevance:} a B-PINN extension is the strongest secondary contribution you can offer. ``This region of the wall has predicted WSS $1.2 \pm 0.4$\,Pa with credible interval [0.5, 2.1]'' is exactly what clinicians need.
+
+\section{Training dynamics and pitfalls specific to PINNs}
+
+\subsection*{Optimisers}
+\begin{itemize}[noitemsep]
+\item \textbf{Adam / AdamW}: default for the first phase of training.
+\item \textbf{L-BFGS}: second-order, often used as a \emph{refinement} step after Adam. Particularly effective for PINNs because the loss landscape near a good minimum is well-conditioned.
+\end{itemize}
+Standard recipe: 50k--200k Adam iterations followed by L-BFGS to convergence.
+
+\subsection*{Learning-rate schedule}
+Cosine annealing or step decay. Start at $10^{-3}$, anneal to $10^{-6}$.
+
+\subsection*{Failure modes (you will see these)}
+\begin{enumerate}[noitemsep]
+\item \textbf{Convergence to trivial $\mathbf{u}\equiv\mathbf{0}$.} Indicates loss-balance pathology: physics + no-slip dominate, data term too weak. Increase $\lambda_{\text{data}}$ or rescale.
+\item \textbf{Smooth bulk fit, wrong WSS.} The classical near-wall failure. Symptoms: low validation MSE on volume velocity but $\boldsymbol{\tau}_w$ off by a factor.
+\item \textbf{Pressure indeterminacy.} Pressure is determined only up to a constant by the equations; the network may drift. Anchor pressure at one outlet point.
+\item \textbf{Stiff loss landscape.} Symptom: training stalls at large loss. Causes: inadequate non-dimensionalisation; high Re; bad initialisation. Mitigations: rescale, reduce Re for development, use SIREN initialisation, gradient clipping.
+\end{enumerate}
+
+\subsection*{Computing WSS from a trained PINN}
+Once $\mathbf{u}_\theta$ is trained, query at a wall point $\mathbf{x}_w$ with outward normal $\hat{\mathbf{n}}$ and compute, via autograd:
+\[
+\mathbf{D}_\theta(\mathbf{x}_w) = \tfrac{1}{2}\!\big(\nabla\mathbf{u}_\theta + (\nabla\mathbf{u}_\theta)^\top\big)\Big|_{\mathbf{x}_w},
+\]
+then $\boldsymbol{\tau}_w$ from \eqref{eq:WSS} (Document 2). \emph{The network is differentiable everywhere, by construction; this is the central PINN advantage over voxel-based finite differences.}
+
+\section{Evaluation: more than just one MSE}
+
+\subsection*{Field-level metrics}
+\begin{itemize}[noitemsep]
+\item Mean absolute error (MAE), root-mean-square error (RMSE).
+\item Normalised RMSE (NRMSE): RMSE divided by the RMS of the truth. Often reported as a percentage.
+\item $R^2$ coefficient of determination.
+\end{itemize}
+
+\subsection*{WSS-specific metrics}
+\begin{itemize}[noitemsep]
+\item Pointwise relative error in $\tau_w$ on the wall surface.
+\item Mean WSS, peak WSS, area-weighted distribution metrics.
+\item TAWSS and OSI (in pulsatile cases).
+\end{itemize}
+
+\subsection*{Physical-consistency metrics}
+\begin{itemize}[noitemsep]
+\item Cross-section flow-rate constancy: max relative deviation of $Q(z)$ along the centreline.
+\item Mass-balance error at bifurcations.
+\item Pressure-drop consistency: $\Delta P\cdot Q$ vs.\ volume-integrated dissipation.
+\end{itemize}
+
+\subsection*{Clinical / agreement metrics}
+\begin{itemize}[noitemsep]
+\item Bland--Altman analysis on TAWSS or peak WSS, network vs.\ CFD ground truth.
+\item Pearson and Spearman correlation.
+\item ICC for paired comparisons across geometries.
+\end{itemize}
+
+\section{Architectural alternatives you should know about}
+
+\subsection*{DeepONet}
+Learns operators $\mathcal{G}: \mathcal{F}_{\text{input}} \to \mathcal{F}_{\text{output}}$, e.g., from a boundary-condition function to a velocity field. Two networks: ``branch'' (encodes input function) and ``trunk'' (encodes evaluation point). Useful if you want a single trained model to handle many geometries.
+
+\subsection*{Fourier Neural Operator (FNO)}
+Learns operators by parameterising integral kernels in Fourier space. Resolution-invariant. Strong on Cartesian PDEs; harder on irregular geometries (Geo-FNO addresses this).
+
+\subsection*{Graph Neural Networks (GNNs)}
+Operate on unstructured meshes. PI-GNN (physics-informed GNN) approaches for WSS prediction (Wang et al.\ 2025) are competitive supervised baselines; useful as a comparison method.
+
+\subsection*{Convolutional approaches (U-Net, super-resolution networks)}
+Used in Fathi et al.\ 2020 for 4D-flow super-resolution. \emph{Supervised}, not physics-informed in the strict sense (sometimes augmented with continuity loss). Useful baseline.
+
+\textbf{Recommendation.} Stay with a coordinate-based PINN as your primary method. Compare against (i) tri-linear interpolation of the noisy field plus finite-difference WSS, (ii) a supervised MLP (no physics), and (iii) optionally one of the operator-learning baselines. This gives you a defensible comparison story without doubling your engineering burden.
+
+\section{Practical training hygiene}
+
+\subsection*{Reproducibility}
+\begin{itemize}[noitemsep]
+\item Fix random seeds for numpy, torch, and python's \texttt{random}.
+\item Log every hyperparameter via Hydra or a YAML config.
+\item Track every run with W\&B or MLflow.
+\item Version your synthetic-MRI generation pipeline; tiny noise differences can flip results.
+\end{itemize}
+
+\subsection*{Checkpointing and selection}
+Save checkpoints every $N$ epochs; keep the one with the lowest \emph{validation physics + data loss} (don't use training loss for selection).
+
+\subsection*{Early stopping}
+Use validation loss; patience $\sim 5$--$10$\% of total epochs.
+
+\subsection*{Hardware}
+A single GPU (RTX 3090 / A100 class) is enough for 3D Stokes-regime PINNs on idealised geometry. Patient-specific aortas at higher Re may need larger memory or distributed training.
+
+\section{What to read in the ML literature}
+
+In addition to the must-read PINN papers in the strategy document:
+\begin{itemize}[noitemsep]
+\item Goodfellow, Bengio, Courville, \emph{Deep Learning} (2016) --- chapters 6--8 for the basics.
+\item Tancik et al.\ 2020 (NeurIPS) --- ``Fourier features let networks learn high-frequency functions'' --- read this carefully; it's directly applicable.
+\item Wang, Wang, Perdikaris 2021 (CMAME) --- ``On the eigenvector bias of Fourier feature networks: from regression to solving multi-scale PDEs with PINNs'' --- the bridge to your problem.
+\item Karniadakis et al.\ 2021 (Nat.\ Rev.\ Phys.) --- ``Physics-informed machine learning'' --- canonical review.
+\item Cai et al.\ 2022 ``Physics-informed neural networks (PINNs) for fluid mechanics'' (Acta Mech. Sin.) --- domain-specific review.
+\end{itemize}
+
+\section*{Synthesis: what your tech stack should look like}
+
+\begin{itemize}[noitemsep]
+\item \textbf{Framework:} PyTorch (autograd is essential).
+\item \textbf{PINN scaffolding:} DeepXDE for the first prototype, then your own PyTorch implementation.
+\item \textbf{CFD ground truth:} FEniCSx for idealised geometries; SimVascular for VMR cases.
+\item \textbf{Synthetic-MRI pipeline:} custom Python; voxelisation via PyVista or scipy; noise via numpy.
+\item \textbf{Visualisation:} PyVista (3D), matplotlib (2D), seaborn (statistics).
+\item \textbf{Experiment tracking:} W\&B + Hydra config.
+\item \textbf{Compute:} 1 GPU sufficient for idealised; cluster access useful for the systematic sweep.
+\end{itemize}
+
+\textbf{Final do/don't.}\\
+\textbf{Do:} non-dimensionalise; use tanh; sample collocation points fresh each epoch; track every hyperparameter; ablate (RFF, hard constraints, Bayesian).\\
+\textbf{Don't:} use ReLU; trust a low MSE without checking WSS; skip pressure anchoring; use one random seed.
+
+\end{document}

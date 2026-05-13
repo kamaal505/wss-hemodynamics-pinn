@@ -1,0 +1,4 @@
+# @package geometry
+case_id: caseR
+vtk_path: data/geometries/anxplore/caseR/Fluid_caseR.vtk
+# z-span 6.223 mm — irregular geometry (R = reference in Goetz et al.)

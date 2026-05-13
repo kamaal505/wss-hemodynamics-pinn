@@ -1,0 +1,888 @@
+% =============================================================================
+% 06_fenicsx_cfd_implementation.tex
+%
+% FEniCSx / dolfinx 0.10 Implementation Guide
+% Stokes CFD on AnXplore geometries — WSS ground-truth pipeline
+%
+% Purpose: authoritative implementation reference for Claude Code.
+% All API patterns verified against dolfinx v0.10.0.post0 official docs.
+% Do NOT use patterns from older dolfinx versions (0.4--0.8 have
+% incompatible import paths and function signatures).
+%
+% Read this document when: writing or reviewing any code in
+%   src/hemodyn_pinn/cfd/stokes_solver.py
+%   src/hemodyn_pinn/cfd/ns_solver.py
+%   src/hemodyn_pinn/cfd/postprocess.py
+%   scripts/02_run_cfd.py
+% =============================================================================
+
+\documentclass[11pt]{article}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{listings}
+\usepackage{booktabs}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\titleformat{\section}{\large\bfseries\color{blue!40!black}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\definecolor{codebg}{RGB}{245,245,242}
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single, framerule=0pt, rulecolor=\color{codebg},
+  breaklines=true, breakatwhitespace=true,
+  showstringspaces=false,
+  commentstyle=\color{gray},
+  keywordstyle=\color{blue!70!black},
+}
+
+\title{\bfseries FEniCSx CFD Implementation Guide\\[0.3em]
+\large Stokes solver, boundary tagging, WSS extraction, and output format\\
+for the WSS-from-MRI PINN project --- dolfinx 0.10}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{How to use this document}
+
+This is a precision engineering reference, not a tutorial. It records
+the exact dolfinx~0.10 API patterns required for the CFD ground-truth
+pipeline, the gotchas specific to this project's geometry, and the
+decisions already made. Each section states what to do, gives the
+verified code pattern, and explains why (because silent API mistakes in
+FEniCSx produce solutions that look correct but are wrong).
+
+\textbf{Version lock.} All patterns are verified against
+\texttt{dolfinx v0.10.0.post0}. Do not use patterns from older versions;
+the import paths (\texttt{basix.ufl}, \texttt{dolfinx.fem.petsc}),
+function names (\texttt{functionspace} vs \texttt{FunctionSpace}), and
+assembly API changed substantially between 0.7 and 0.9.
+
+\section{The strong form and its physical parameters}
+
+The steady Stokes equations in physical (dimensional) variables:
+\begin{align}
+-\mu\,\Delta\mathbf{u} + \nabla p &= \mathbf{0} \quad \text{in } \Omega, \label{eq:stokes_mom}\\
+\nabla\cdot\mathbf{u} &= 0 \quad \text{in } \Omega. \label{eq:stokes_cont}
+\end{align}
+
+\textbf{Note on sign convention.} The dolfinx demo uses the symmetrised form
+$-\nabla\cdot(\nabla\mathbf{u} + p\mathbf{I}) = \mathbf{f}$, which flips the
+sign of the pressure relative to the classical definition. This gives a
+symmetric saddle-point system. The sign flip means the pressure solution
+from dolfinx satisfies $p_{\text{dolfinx}} = -p_{\text{physical}}$; correct
+for this when reporting or exporting pressure.
+
+\textbf{Physical parameters (Phase~1--2, Newtonian blood):}
+\begin{itemize}[noitemsep]
+  \item Density: $\rho = 1060\,\text{kg/m}^3$ (not needed in Stokes, only for Re check)
+  \item Dynamic viscosity: $\mu = 3.5\times10^{-3}\,\text{Pa}\cdot\text{s}$
+  \item Inlet mean velocity: $U = 2\times10^{-5}\,\text{m/s}$
+    (gives $\mathrm{Re} = \rho UL/\mu \approx 0.10$ with $L = 0.01628\,\text{m}$;
+    confirmed Stokes regime)
+  \item Mesh coordinates: millimetres. Convert to metres before setting up any
+    FEniCSx form: multiply all coordinate values by \texttt{1e-3}.
+\end{itemize}
+
+\section{Mesh loading: from VTK to dolfinx}
+
+AnXplore meshes are tetrahedral VTK files (\texttt{Fluid\_*.vtk}).
+dolfinx does not read VTK directly; convert via meshio to XDMF+H5 first.
+
+\begin{lstlisting}
+import meshio
+import numpy as np
+
+def vtk_to_xdmf(vtk_path: str, xdmf_path: str) -> None:
+    """Convert an AnXplore VTK mesh to XDMF+H5 for dolfinx.
+
+    Scales coordinates from mm to m and writes a single-domain
+    tetrahedral mesh. Surface triangles (if present) are dropped;
+    boundary facets are detected topologically in dolfinx.
+    """
+    mesh = meshio.read(vtk_path)
+    # Scale mm -> m
+    mesh.points = mesh.points * 1e-3
+    # Keep only tetrahedral cells; drop triangles and anything else
+    tet_cells = [c for c in mesh.cells if c.type == "tetra"]
+    out = meshio.Mesh(points=mesh.points, cells=tet_cells)
+    meshio.write(xdmf_path, out)
+\end{lstlisting}
+
+\textbf{Why drop surface triangles?} dolfinx builds its own boundary
+facet topology from the tet connectivity. Importing mixed cell-type meshes
+(tetra + triangle) confuses dolfinx's topology layer and causes incorrect
+boundary detection. Extract boundary facets inside dolfinx instead
+(see Section~\ref{sec:boundary_tagging}).
+
+\subsection*{Loading the XDMF mesh in dolfinx}
+
+\begin{lstlisting}
+from mpi4py import MPI
+from dolfinx.io import XDMFFile
+from dolfinx.mesh import Mesh
+
+def load_mesh(xdmf_path: str) -> Mesh:
+    with XDMFFile(MPI.COMM_WORLD, xdmf_path, "r") as f:
+        mesh = f.read_mesh(name="Grid")
+    # Always create connectivity for facet-level operations
+    mesh.topology.create_connectivity(
+        mesh.topology.dim - 1, mesh.topology.dim
+    )
+    return mesh
+\end{lstlisting}
+
+The \texttt{create\_connectivity} call is mandatory before any boundary
+tagging. Omitting it causes silent empty facet sets and hard-to-diagnose
+boundary condition failures.
+
+\section{Boundary tagging}
+\label{sec:boundary_tagging}
+
+AnXplore geometries have three boundary types that must be tagged
+with integer markers before imposing BCs:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Tag} & \textbf{Boundary} & \textbf{Detection criterion} \\
+\midrule
+1 & Wall $\Gamma_w$ & All boundary facets not tagged as inlet or outlet \\
+2 & Inlet $\Gamma_\text{in}$ & Facets at $y \approx 0$, centroid $x < 0$ \\
+3 & Outlet $\Gamma_\text{out}$ & Facets at $y \approx 0$, centroid $x > 0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This topology was confirmed by mesh inspection (CLAUDE.md open question~4,
+now closed): both inlet and outlet are circular disks at $y=0$ with outward
+normal $(0,-1,0)$; they are separated at $x=0$. Tube radius $\approx 2\,\text{mm}$
+$= 0.002\,\text{m}$ after scaling.
+
+\begin{lstlisting}
+import numpy as np
+from dolfinx.mesh import locate_entities_boundary, meshtags
+
+def tag_boundaries(mesh) -> "dolfinx.mesh.MeshTags":
+    """Return a MeshTags object with integer tags on all boundary facets.
+
+    Tags: 1=wall, 2=inlet (x<0, y~0), 3=outlet (x>0, y~0).
+    All coordinates are in metres (mesh already scaled mm->m).
+    """
+    fdim = mesh.topology.dim - 1
+    tol = 1e-6  # geometric tolerance in metres
+
+    def inlet(x):
+        return np.isclose(x[1], 0.0, atol=tol) & (x[0] < 0.0)
+
+    def outlet(x):
+        return np.isclose(x[1], 0.0, atol=tol) & (x[0] >= 0.0)
+
+    # Locate facets for inlet and outlet
+    inlet_facets  = locate_entities_boundary(mesh, fdim, inlet)
+    outlet_facets = locate_entities_boundary(mesh, fdim, outlet)
+
+    # Collect all boundary facets, then assign wall tag to the remainder
+    all_boundary = locate_entities_boundary(mesh, fdim, lambda x: np.ones(x.shape[1], dtype=bool))
+
+    inlet_set  = set(inlet_facets.tolist())
+    outlet_set = set(outlet_facets.tolist())
+    wall_facets = np.array(
+        [f for f in all_boundary if f not in inlet_set and f not in outlet_set],
+        dtype=np.int32
+    )
+
+    # Build combined sorted index/values arrays for meshtags
+    indices = np.concatenate([wall_facets, inlet_facets, outlet_facets])
+    values  = np.concatenate([
+        np.full(len(wall_facets),   1, dtype=np.int32),
+        np.full(len(inlet_facets),  2, dtype=np.int32),
+        np.full(len(outlet_facets), 3, dtype=np.int32),
+    ])
+    sort_idx = np.argsort(indices)
+    return meshtags(mesh, fdim, indices[sort_idx], values[sort_idx])
+\end{lstlisting}
+
+\textbf{Sanity check (always run):} after tagging, assert
+\texttt{np.sum(tags.values == 2) > 0} and
+\texttt{np.sum(tags.values == 3) > 0}. Empty inlet or outlet tags mean
+no-slip will be applied everywhere and the solve will return
+$\mathbf{u} \equiv \mathbf{0}$.
+
+\section{Function spaces: Taylor--Hood elements}
+
+Taylor--Hood ($\mathbf{P}_2 / P_1$) is the standard stable pair for Stokes:
+piecewise quadratic velocity, piecewise linear pressure. It satisfies the
+inf-sup (LBB) condition on tetrahedral meshes.
+
+\begin{lstlisting}
+import ufl
+from basix.ufl import element, mixed_element
+from dolfinx import default_real_type
+from dolfinx.fem import functionspace, Function
+
+def make_function_spaces(mesh):
+    """Create Taylor-Hood P2/P1 velocity and pressure spaces.
+
+    Returns (V, Q) as separate spaces for the blocked formulation,
+    which is preferred for iterative solvers.
+    """
+    P2 = element(
+        "Lagrange", mesh.basix_cell(), degree=2,
+        shape=(mesh.geometry.dim,), dtype=default_real_type
+    )
+    P1 = element(
+        "Lagrange", mesh.basix_cell(), degree=1,
+        dtype=default_real_type
+    )
+    V = functionspace(mesh, P2)  # velocity: vector P2
+    Q = functionspace(mesh, P1)  # pressure: scalar P1
+    return V, Q
+\end{lstlisting}
+
+\textbf{Why separate spaces, not mixed?} The blocked ($V \times Q$
+separately) formulation is preferred here because it allows the MINRES +
+block-diagonal preconditioner (see Section~\ref{sec:solver}), which
+converges much faster than a direct solver on meshes of ~160k nodes.
+The mixed element approach (\texttt{mixed\_element([P2, P1])}) is
+simpler but slower for large problems; use it only for debugging.
+
+\section{Boundary conditions}
+
+\subsection*{Inlet: parabolic Poiseuille profile}
+
+For a circular inlet of radius $R = 0.002\,\text{m}$ centred at the
+centroid of the inlet facets, the Poiseuille profile is:
+\[
+  u_y(r) = U_{\max}\!\left(1 - \frac{r^2}{R^2}\right), \qquad
+  U_{\max} = 2\bar{U}, \qquad
+  r = \sqrt{(x - x_c)^2 + (z - z_c)^2}.
+\]
+Velocity direction: $(0, -1, 0)$ (into the domain, outward normal is
+$(0, -1, 0)$ pointing out, so flow enters in the $-y$ direction).
+
+\begin{lstlisting}
+import numpy as np
+from dolfinx.fem import Function, locate_dofs_topological, dirichletbc
+
+def make_inlet_bc(V, mesh, tags, U_mean: float = 2e-5):
+    """Parabolic Poiseuille inlet BC on the inlet facets (tag=2).
+
+    Parameters
+    ----------
+    U_mean : float
+        Mean inlet velocity in m/s. Default 2e-5 gives Re ~ 0.10.
+    """
+    R = 0.002        # tube radius in metres
+    U_max = 2.0 * U_mean
+
+    # Find centroid of inlet facets to locate tube axis
+    fdim = mesh.topology.dim - 1
+    inlet_facets = tags.find(2)
+    inlet_dofs = locate_dofs_topological(V, fdim, inlet_facets)
+
+    u_inlet = Function(V)
+
+    def inlet_profile(x):
+        # x has shape (3, N); rows are x, y, z coordinates
+        # Centroid of inlet (approximate; refine if asymmetric)
+        xc = x[0].mean()
+        zc = x[2].mean()
+        r2 = (x[0] - xc)**2 + (x[2] - zc)**2
+        speed = U_max * np.maximum(0.0, 1.0 - r2 / R**2)
+        values = np.zeros((3, x.shape[1]))
+        values[1] = -speed  # y-component, negative = into domain
+        return values
+
+    u_inlet.interpolate(inlet_profile)
+    bc_inlet = dirichletbc(u_inlet, inlet_dofs)
+    return bc_inlet
+\end{lstlisting}
+
+\subsection*{Wall: no-slip}
+
+\begin{lstlisting}
+def make_wall_bc(V, mesh, tags):
+    fdim = mesh.topology.dim - 1
+    wall_facets = tags.find(1)
+    wall_dofs = locate_dofs_topological(V, fdim, wall_facets)
+    u_zero = Function(V)  # default initialises to zero
+    return dirichletbc(u_zero, wall_dofs)
+\end{lstlisting}
+
+\subsection*{Outlet: zero-pressure Neumann}
+
+The natural BC at the outlet is a zero-traction condition
+$(-p\mathbf{I} + \mu\nabla\mathbf{u})\cdot\hat{\mathbf{n}} = \mathbf{0}$,
+which is the default Neumann condition in the weak form. \emph{Do nothing}
+at the outlet in the code; the weak form already encodes it.
+
+However, since the pressure is only determined up to a constant, a
+pressure nullspace must be handled explicitly (Section~\ref{sec:nullspace}).
+
+\section{Weak form}
+
+The symmetric weak form used by dolfinx (with the sign-flipped pressure):
+\[
+  a((\mathbf{u},p), (\mathbf{v},q))
+    = \int_\Omega \nabla\mathbf{u}:\nabla\mathbf{v}\,dx
+    - \int_\Omega p\,\nabla\cdot\mathbf{v}\,dx
+    + \int_\Omega q\,\nabla\cdot\mathbf{u}\,dx
+    = \int_\Omega \mu^{-1}\mathbf{f}\cdot\mathbf{v}\,dx
+\]
+where $\mathbf{f}=\mathbf{0}$ (no body force). The viscosity $\mu$ enters
+as a scaling on the left-hand side when using dimensional coordinates.
+
+\begin{lstlisting}
+import ufl
+from dolfinx.fem import Constant, form
+from petsc4py import PETSc
+
+def make_stokes_forms(mesh, V, Q, mu: float = 3.5e-3):
+    """Build the blocked UFL forms for the Stokes problem.
+
+    Parameters
+    ----------
+    mu : float
+        Dynamic viscosity in Pa.s.
+
+    Returns
+    -------
+    a : compiled blocked bilinear form (2x2 list)
+    L : compiled blocked linear form (2-list)
+    a_p11 : compiled pressure mass matrix for preconditioner
+    """
+    u, p = ufl.TrialFunction(V), ufl.TrialFunction(Q)
+    v, q = ufl.TestFunction(V), ufl.TestFunction(Q)
+
+    mu_c = Constant(mesh, PETSc.ScalarType(mu))
+    f    = Constant(mesh, PETSc.ScalarType((0.0, 0.0, 0.0)))
+
+    # Bilinear form (2x2 block structure)
+    a_ufl = [
+        [mu_c * ufl.inner(ufl.grad(u), ufl.grad(v)) * ufl.dx,
+         ufl.inner(p, ufl.div(v)) * ufl.dx],
+        [ufl.inner(ufl.div(u), q) * ufl.dx, None],
+    ]
+    # Linear form
+    L_ufl = [ufl.inner(f, v) * ufl.dx, ufl.ZeroBaseForm((q,))]
+
+    # Pressure mass matrix for block-diagonal preconditioner
+    a_p11_ufl = ufl.inner(p, q) * ufl.dx
+
+    return form(a_ufl), form(L_ufl), form(a_p11_ufl)
+\end{lstlisting}
+
+\textbf{Important.} The viscosity is included in the weak form as a
+\texttt{Constant}, not absorbed into non-dimensionalisation, because the
+CFD solve is in dimensional variables. Non-dimensionalisation is applied
+later, at the synthetic-MRI and PINN stages.
+
+\section{Pressure nullspace and solver}
+\label{sec:solver}
+
+The Stokes problem with a pure-Neumann pressure BC (our outlet) has
+pressure defined only up to a constant. Without nullspace removal, MINRES
+will stagnate or produce a drift-contaminated pressure field.
+
+\textbf{Recommended solver: MINRES with block-diagonal preconditioner.}
+This is the standard choice for symmetric indefinite saddle-point problems
+of this size ($\sim 160\text{k}$ nodes $\times$ 4 unknowns $\approx 640\text{k}$ DOFs).
+
+\begin{lstlisting}
+from dolfinx.fem import (
+    bcs_by_block, extract_function_spaces, locate_dofs_topological,
+)
+from dolfinx.fem.petsc import (
+    LinearProblem, assemble_matrix, assemble_vector,
+    apply_lifting, create_vector, set_bc,
+)
+from dolfinx.la.petsc import create_vector_wrap
+
+def solve_stokes(mesh, V, Q, a, L, a_p11, bcs):
+    """Solve the blocked Stokes system with MINRES + fieldsplit preconditioner.
+
+    Handles the pressure nullspace explicitly.
+
+    Returns
+    -------
+    u_h : dolfinx.fem.Function  velocity solution on V
+    p_h : dolfinx.fem.Function  pressure solution on Q
+    """
+    a_p = [[a[0][0], None], [None, a_p11]]
+
+    problem = LinearProblem(
+        a,
+        L,
+        kind="nest",
+        bcs=bcs,
+        P=a_p,
+        petsc_options_prefix="stokes_",
+        petsc_options={
+            "ksp_type":                   "minres",
+            "ksp_rtol":                   1e-10,
+            "ksp_max_it":                 500,
+            "pc_type":                    "fieldsplit",
+            "pc_fieldsplit_type":         "additive",
+            "fieldsplit_0_ksp_type":      "preonly",
+            "fieldsplit_0_pc_type":       "gamg",
+            "fieldsplit_1_ksp_type":      "preonly",
+            "fieldsplit_1_pc_type":       "jacobi",
+        },
+    )
+
+    # Pressure nullspace: constant vector over the pressure subspace
+    null_vec = create_vector(extract_function_spaces(L), "nest")
+    null_vecs = null_vec.getNestSubVecs()
+    null_vecs[0].set(0.0)   # velocity part: zero
+    null_vecs[1].set(1.0)   # pressure part: constant
+    null_vec.normalize()
+    nsp = PETSc.NullSpace().create(vectors=[null_vec])
+    problem.A.setNullSpace(nsp)
+
+    # Mark preconditioner blocks as SPD for GAMG
+    A00 = problem.A.getNestSubMatrix(0, 0)
+    A00.setOption(PETSc.Mat.Option.SPD, True)
+    P00 = problem.P_mat.getNestSubMatrix(0, 0)
+    P00.setOption(PETSc.Mat.Option.SPD, True)
+    P11 = problem.P_mat.getNestSubMatrix(1, 1)
+    P11.setOption(PETSc.Mat.Option.SPD, True)
+
+    u_h, p_h = problem.solve()
+
+    converged = problem.solver.getConvergedReason()
+    if converged <= 0:
+        raise RuntimeError(
+            f"Stokes solver did not converge. "
+            f"PETSc reason code: {converged}. "
+            f"Try reducing ksp_rtol or increasing ksp_max_it."
+        )
+    return u_h, p_h
+\end{lstlisting}
+
+\subsection*{Pressure sign correction after solve}
+
+After solving, correct the pressure sign so it matches the physical
+convention $p_{\text{physical}} = -p_{\text{dolfinx}}$:
+
+\begin{lstlisting}
+import numpy as np
+
+def correct_pressure_sign(p_h) -> None:
+    """Negate the dolfinx pressure field in-place to recover physical pressure."""
+    p_h.x.array[:] = -p_h.x.array[:]
+\end{lstlisting}
+
+\subsection*{Pressure anchoring (alternative to nullspace)}
+
+If iterative nullspace removal is insufficient (rare), anchor the pressure
+at a single outlet degree of freedom to zero:
+
+\begin{lstlisting}
+from dolfinx.fem import locate_dofs_topological, dirichletbc
+
+def make_pressure_anchor(Q, mesh, tags) -> "DirichletBC":
+    """Pin pressure = 0 at one outlet DOF. Use as last resort if
+    nullspace removal is insufficient."""
+    outlet_facets = tags.find(3)
+    p_dofs = locate_dofs_topological(Q, mesh.topology.dim - 1, outlet_facets)
+    # Anchor only the first DOF to avoid over-constraining
+    return dirichletbc(PETSc.ScalarType(0.0), p_dofs[:1], Q)
+\end{lstlisting}
+
+\section{WSS extraction}
+\label{sec:wss}
+
+WSS is the tangential traction on the wall:
+\[
+  \boldsymbol{\tau}_w
+    = 2\mu\,\mathbf{D}(\mathbf{u})\cdot\hat{\mathbf{n}}
+      - 2\mu\,\bigl(\hat{\mathbf{n}}^\top\mathbf{D}(\mathbf{u})\hat{\mathbf{n}}\bigr)\hat{\mathbf{n}},
+  \qquad
+  \mathbf{D} = \tfrac{1}{2}(\nabla\mathbf{u} + (\nabla\mathbf{u})^\top).
+\]
+
+In FEniCSx, WSS is computed as a boundary expression using UFL and
+projected onto the wall facets.
+
+\begin{lstlisting}
+import ufl
+from basix.ufl import element
+from dolfinx import default_real_type
+from dolfinx.fem import Expression, Function, functionspace
+from dolfinx.fem.petsc import LinearProblem
+
+def compute_wss(
+    mesh, u_h, tags, mu: float = 3.5e-3
+) -> "dolfinx.fem.Function":
+    """Compute WSS magnitude field on the wall surface.
+
+    Projects the WSS vector onto a DG-0 (piecewise constant) scalar
+    space on wall facets, returning ||tau_w|| in Pa.
+
+    The result is a Function on the full mesh DG-0 space; only the
+    values at wall facets carry physical meaning.
+    """
+    fdim = mesh.topology.dim - 1
+    n = ufl.FacetNormal(mesh)
+
+    # Strain rate tensor
+    D = 0.5 * (ufl.grad(u_h) + ufl.grad(u_h).T)
+
+    # Traction vector on wall (using sign-corrected physical viscosity)
+    traction = 2.0 * mu * ufl.dot(D, n)
+
+    # Tangential component (subtract normal projection)
+    traction_normal = ufl.dot(traction, n) * n
+    wss_vector = traction - traction_normal
+
+    # WSS magnitude
+    wss_mag = ufl.sqrt(ufl.dot(wss_vector, wss_vector))
+
+    # Project onto DG-0 space over wall facets
+    # Use a DG-0 space (one value per cell, evaluated at wall)
+    DG0_elem = element("DG", mesh.basix_cell(), degree=0,
+                        dtype=default_real_type)
+    S = functionspace(mesh, DG0_elem)
+    wss_h = Function(S)
+
+    # Use ds measure restricted to wall facets
+    wall_facets = tags.find(1)
+    ds_wall = ufl.Measure("ds", domain=mesh,
+                           subdomain_data=tags, subdomain_id=1)
+
+    v = ufl.TestFunction(S)
+    u_trial = ufl.TrialFunction(S)
+
+    # L2 projection of wss_mag onto S over wall facets
+    # Note: lumped mass approximation (divide by facet area) via
+    # explicit L2 projection
+    a_proj = ufl.inner(u_trial, v) * ds_wall
+    L_proj = ufl.inner(wss_mag, v) * ds_wall
+
+    from dolfinx.fem import form as fem_form
+    prob = LinearProblem(
+        a_proj, L_proj,
+        petsc_options={"ksp_type": "cg", "pc_type": "jacobi",
+                       "ksp_rtol": 1e-12}
+    )
+    wss_h = prob.solve()
+    return wss_h
+\end{lstlisting}
+
+\textbf{Alternative (simpler, lower accuracy): pointwise evaluation.}
+For diagnostic purposes, evaluate the WSS expression at wall facet
+midpoints using \texttt{Expression} and \texttt{eval}. This avoids the
+projection solve but gives pointwise values rather than a spatially
+consistent field. Use only for sanity checks.
+
+\subsection*{WSS vector field (for direction-sensitive metrics)}
+
+For OSI and vector WSS maps, export the full vector:
+
+\begin{lstlisting}
+def compute_wss_vector(mesh, u_h, tags, mu=3.5e-3):
+    """Compute WSS vector (not just magnitude) on wall facets.
+
+    Returns a Function on a DG-0 vector space (dim 3).
+    """
+    from basix.ufl import element
+    from dolfinx import default_real_type
+    from dolfinx.fem import functionspace, Function
+    from dolfinx.fem import form as fem_form
+    import ufl
+
+    n = ufl.FacetNormal(mesh)
+    D = 0.5 * (ufl.grad(u_h) + ufl.grad(u_h).T)
+    traction = 2.0 * mu * ufl.dot(D, n)
+    wss_vec = traction - ufl.dot(traction, n) * n
+
+    DG0v = element("DG", mesh.basix_cell(), degree=0,
+                   shape=(mesh.geometry.dim,), dtype=default_real_type)
+    S3 = functionspace(mesh, DG0v)
+    v  = ufl.TestFunction(S3)
+    u_ = ufl.TrialFunction(S3)
+    ds_wall = ufl.Measure("ds", domain=mesh,
+                          subdomain_data=tags, subdomain_id=1)
+    a_ = ufl.inner(u_, v) * ds_wall
+    L_ = ufl.inner(wss_vec, v) * ds_wall
+    from dolfinx.fem.petsc import LinearProblem
+    prob = LinearProblem(
+        a_, L_,
+        petsc_options={"ksp_type": "cg", "pc_type": "jacobi",
+                       "ksp_rtol": 1e-12}
+    )
+    return prob.solve()
+\end{lstlisting}
+
+\section{Output format: what the pipeline expects}
+
+The downstream pipeline (synthetic MRI operator and PINN) reads CFD
+output from HDF5 files via meshio or h5py. Export the following per case:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{File} & \textbf{Contents} & \textbf{Format} \\
+\midrule
+\texttt{velocity.xdmf / .h5} & $\mathbf{u}$ on P2 nodes & XDMF + HDF5 \\
+\texttt{pressure.xdmf / .h5} & $p$ on P1 nodes (sign-corrected) & XDMF + HDF5 \\
+\texttt{wss\_mag.xdmf / .h5} & $\|\boldsymbol{\tau}_w\|$ on DG-0 cells & XDMF + HDF5 \\
+\texttt{wss\_vec.xdmf / .h5} & $\boldsymbol{\tau}_w$ on DG-0 cells & XDMF + HDF5 \\
+\texttt{mesh.xdmf / .h5} & Mesh geometry + boundary tags & XDMF + HDF5 \\
+\texttt{metadata.json} & Physical params, Re, U, mesh path, solve time & JSON \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{lstlisting}
+import json
+from dolfinx.io import XDMFFile
+from mpi4py import MPI
+
+def export_cfd_results(
+    out_dir: str,
+    mesh, tags, u_h, p_h, wss_mag_h, wss_vec_h,
+    metadata: dict,
+) -> None:
+    """Write all CFD outputs to out_dir in XDMF+HDF5 format."""
+    import pathlib
+    out = pathlib.Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    comm = MPI.COMM_WORLD
+
+    for fname, func in [
+        ("velocity",  u_h),
+        ("pressure",  p_h),
+        ("wss_mag",   wss_mag_h),
+        ("wss_vec",   wss_vec_h),
+    ]:
+        with XDMFFile(comm, str(out / f"{fname}.xdmf"), "w") as f:
+            f.write_mesh(mesh)
+            func.x.scatter_forward()
+            f.write_function(func)
+
+    # Write mesh with boundary tags
+    with XDMFFile(comm, str(out / "mesh.xdmf"), "w") as f:
+        f.write_mesh(mesh)
+        f.write_meshtags(tags, mesh.geometry)
+
+    # Write metadata
+    if comm.rank == 0:
+        with open(out / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
+\end{lstlisting}
+
+\section{Full pipeline function}
+
+\begin{lstlisting}
+import time
+
+def run_stokes_cfd(
+    vtk_path: str,
+    out_dir: str,
+    mu: float = 3.5e-3,
+    U_mean: float = 2e-5,
+) -> None:
+    """End-to-end Stokes CFD for one AnXplore case.
+
+    Parameters
+    ----------
+    vtk_path : str
+        Path to the AnXplore VTK mesh file (in mm).
+    out_dir : str
+        Directory to write all output files.
+    mu : float
+        Dynamic viscosity in Pa.s.
+    U_mean : float
+        Mean inlet velocity in m/s. Default gives Re ~ 0.10.
+    """
+    import tempfile, os
+    from mpi4py import MPI
+
+    t0 = time.time()
+
+    # 1. Convert mesh
+    with tempfile.NamedTemporaryFile(suffix=".xdmf", delete=False) as tmp:
+        xdmf_tmp = tmp.name
+    vtk_to_xdmf(vtk_path, xdmf_tmp)
+
+    # 2. Load mesh
+    mesh = load_mesh(xdmf_tmp)
+    os.unlink(xdmf_tmp)
+    os.unlink(xdmf_tmp.replace(".xdmf", ".h5"))
+
+    # 3. Tag boundaries
+    tags = tag_boundaries(mesh)
+
+    # Sanity check
+    assert len(tags.find(2)) > 0, "Inlet facets not found — check geometry"
+    assert len(tags.find(3)) > 0, "Outlet facets not found — check geometry"
+
+    # 4. Function spaces
+    V, Q = make_function_spaces(mesh)
+
+    # 5. Forms
+    a, L, a_p11 = make_stokes_forms(mesh, V, Q, mu=mu)
+
+    # 6. Boundary conditions
+    bc_inlet = make_inlet_bc(V, mesh, tags, U_mean=U_mean)
+    bc_wall  = make_wall_bc(V, mesh, tags)
+    bcs = [bc_wall, bc_inlet]
+
+    # 7. Solve
+    u_h, p_h = solve_stokes(mesh, V, Q, a, L, a_p11, bcs)
+
+    # 8. Correct pressure sign
+    correct_pressure_sign(p_h)
+
+    # 9. Compute WSS
+    wss_mag_h = compute_wss(mesh, u_h, tags, mu=mu)
+    wss_vec_h = compute_wss_vector(mesh, u_h, tags, mu=mu)
+
+    t1 = time.time()
+
+    # 10. Export
+    rho = 1060.0  # kg/m^3
+    L_char = 0.01628  # m
+    Re = rho * U_mean * L_char / mu
+
+    export_cfd_results(
+        out_dir, mesh, tags, u_h, p_h, wss_mag_h, wss_vec_h,
+        metadata={
+            "vtk_source":  vtk_path,
+            "mu_Pa_s":     mu,
+            "rho_kg_m3":   rho,
+            "U_mean_m_s":  U_mean,
+            "Re":          Re,
+            "L_char_m":    L_char,
+            "wall_time_s": round(t1 - t0, 1),
+            "dolfinx_version": "0.10",
+        }
+    )
+    if MPI.COMM_WORLD.rank == 0:
+        print(f"Done. Re={Re:.3f}, wall time={t1-t0:.1f}s -> {out_dir}")
+\end{lstlisting}
+
+\section{Known gotchas and failure modes}
+
+\begin{enumerate}[noitemsep]
+
+\item \textbf{\texttt{FunctionSpace} vs \texttt{functionspace}.}
+  In dolfinx $\geq 0.7$, the constructor is the lowercase
+  \texttt{functionspace(mesh, element)}. The CamelCase
+  \texttt{FunctionSpace} import was removed. Using the old form raises
+  an \texttt{ImportError} that is easy to miss.
+
+\item \textbf{\texttt{basix.ufl.element} required.}
+  From dolfinx~0.7 onward, elements must be created via
+  \texttt{basix.ufl.element}, not \texttt{ufl.FiniteElement} or
+  \texttt{ufl.VectorElement} (those are UFL legacy syntax that
+  dolfinx~0.9+ no longer accepts). Always import from \texttt{basix.ufl}.
+
+\item \textbf{Missing \texttt{create\_connectivity}.}
+  Omitting \texttt{mesh.topology.create\_connectivity(fdim, tdim)}
+  before \texttt{locate\_entities\_boundary} causes empty facet arrays
+  with no error message. The boundary conditions are then silently
+  not applied.
+
+\item \textbf{Solver convergence failure with empty BCs.}
+  If the inlet BC is not applied (empty inlet facet set), the system
+  is singular and MINRES will not converge. The error message from
+  PETSc (\texttt{DIVERGED\_BREAKDOWN} or similar) does not point to
+  the BC. Always check \texttt{len(tags.find(2)) > 0} before solving.
+
+\item \textbf{Pressure drift without nullspace.}
+  Stokes with pure-Neumann pressure has a one-dimensional nullspace.
+  If not removed, MINRES converges to a solution with arbitrary pressure
+  offset. The velocity is correct (it is orthogonal to the nullspace),
+  but the pressure and any derived quantity involving $p$ will be wrong.
+  Always attach the nullspace or use a pressure anchor.
+
+\item \textbf{Coordinate units.}
+  AnXplore meshes are in millimetres. FEniCSx uses whatever units the
+  coordinates are in. Failing to scale to metres means $\mu$ is
+  dimensionally inconsistent with the geometry: viscous stresses will be
+  $10^6\times$ too large or too small, and the solution will look
+  physically unreasonable without an obvious error.
+
+\item \textbf{WSS projection on zero-measure interior cells.}
+  The DG-0 projection of WSS uses a \texttt{ds} measure restricted to
+  wall facets (\texttt{subdomain\_id=1}). Cells not adjacent to wall
+  facets get zero contribution, producing a zero WSS value rather than
+  an error. Always mask interior cells when computing WSS statistics.
+
+\item \textbf{Ghost update before export.}
+  In parallel runs, call \texttt{func.x.scatter\_forward()} before
+  writing to XDMF. In serial runs it is a no-op but should be included
+  for correctness.
+
+\item \textbf{XDMF sidecar \texttt{.h5} file.}
+  Every \texttt{.xdmf} output also creates a \texttt{.h5} file. The
+  meshio reader needs both; do not delete the \texttt{.h5}. When
+  downstream code reads CFD output with meshio, pass the \texttt{.xdmf}
+  path; meshio locates the \texttt{.h5} automatically.
+
+\end{enumerate}
+
+\section{Validation: Poiseuille analytical test}
+
+Before running on AnXplore geometry, validate the solver on a straight
+cylinder of radius $R=0.002\,\text{m}$, length $L=0.02\,\text{m}$,
+where the analytical solution is:
+\[
+  u_y(r) = \frac{1}{4\mu}\frac{\Delta p}{L}(R^2 - r^2),
+  \qquad
+  \tau_w = \frac{R}{2}\frac{|\Delta p|}{L}.
+\]
+The PINN project uses $U_{\text{mean}} = 2\times10^{-5}\,\text{m/s}$, so
+the target pressure drop across $L=0.02\,\text{m}$ is:
+\[
+  \Delta p = \frac{8\mu\bar{U}L}{R^2}
+  = \frac{8 \times 3.5\times10^{-3} \times 2\times10^{-5} \times 0.02}{(0.002)^2}
+  \approx 2.8\times10^{-4}\,\text{Pa}.
+\]
+
+Accept the solver if: (i) the centreline velocity matches $U_{\max} = 2\bar{U}$
+to within 1\%; (ii) the WSS magnitude matches $\tau_w = 4\mu\bar{U}/R =
+7\times10^{-5}\,\text{Pa}$ to within 2\%; (iii) $\|\nabla\cdot\mathbf{u}\|_{L^2}
+< 10^{-10}$ (discrete incompressibility).
+
+\section{Required imports summary}
+
+\begin{lstlisting}
+# All imports required for this module (dolfinx 0.10)
+from mpi4py import MPI
+from petsc4py import PETSc
+import numpy as np
+import ufl
+from basix.ufl import element, mixed_element       # NOT ufl.FiniteElement
+from dolfinx import default_real_type, la
+from dolfinx.fem import (
+    Constant, Function,
+    bcs_by_block, dirichletbc,
+    extract_function_spaces, form,
+    functionspace,                                  # NOT FunctionSpace
+    locate_dofs_topological,
+)
+from dolfinx.fem.petsc import (
+    LinearProblem,
+    apply_lifting, assemble_matrix, assemble_vector,
+    create_vector, set_bc,
+)
+from dolfinx.io import XDMFFile
+from dolfinx.la.petsc import create_vector_wrap
+from dolfinx.mesh import (
+    locate_entities_boundary, meshtags,
+)
+\end{lstlisting}
+
+\end{document}

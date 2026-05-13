@@ -1,0 +1,27 @@
+# PINN base configuration — plain MLP, tanh activations, no RFF.
+# All training defaults from CLAUDE.md §3.6 and doc 03.
+# Override individual keys on the command line:
+#   python scripts/04_train_pinn.py model=pinn_base training.n_adam=20000
+
+# @package _global_
+
+model:
+  n_hidden: 128
+  n_layers: 4
+  use_rff: false
+  rff_features: 128    # ignored when use_rff=false
+  rff_sigma: 1.0       # ignored when use_rff=false
+
+training:
+  n_colloc: 10000      # collocation points per epoch
+  n_wall_bc: 2000      # wall BC points per epoch
+  n_adam: 50000        # Adam iterations
+  n_lbfgs: 5000        # L-BFGS max iterations
+  lr_adam: 1.0e-3
+  lr_lbfgs: 1.0
+  lambda_data: 1.0
+  lambda_phys: 1.0
+  lambda_bc: 10.0
+  lambda_anchor: 10.0
+  checkpoint_every: 1000
+  device: "cpu"        # override to "cuda" when GPU available

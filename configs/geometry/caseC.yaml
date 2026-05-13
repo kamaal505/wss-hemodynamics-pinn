@@ -1,0 +1,4 @@
+# @package geometry
+case_id: caseC
+vtk_path: data/geometries/anxplore/caseC/Fluid_caseC.vtk
+# z-span 4.050 mm — shallowest aneurysm; simplest geometry (start here)

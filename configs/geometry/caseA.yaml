@@ -1,0 +1,4 @@
+# @package geometry
+case_id: caseA
+vtk_path: data/geometries/anxplore/caseA/Fluid_caseA.vtk
+# z-span 4.614 mm — second simplest geometry (use caseC for lowest complexity)

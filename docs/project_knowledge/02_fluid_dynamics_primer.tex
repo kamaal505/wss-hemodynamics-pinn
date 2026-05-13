@@ -1,0 +1,221 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\titleformat{\section}{\large\bfseries\color{blue!40!black}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+\newtheorem{remark}{Remark}
+
+\title{\bfseries Fluid Dynamics for the WSS-from-MRI PINN Project\\[0.3em]
+\large What you actually need to know, with proofs sketched, scaling arguments, and the assumptions you will make}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Reading guide}
+This is not a textbook chapter. It is a focused primer aimed at someone with strong analysis and PDE background but no fluid-mechanics specialism. Each section ends with the \textbf{takeaway} you actually need for the project. If you've seen this material in a course on PDEs you can skim; the parts most likely to be new are the \emph{scaling arguments}, the \emph{boundary-layer analysis}, and the \emph{near-wall asymptotics that determine WSS}.
+
+\section{The Navier--Stokes equations}
+
+For an incompressible Newtonian fluid in a domain $\Omega \subset \mathbb{R}^3$ with boundary $\partial\Omega$:
+\begin{align}
+\rho\!\left(\partial_t \mathbf{u} + (\mathbf{u}\cdot\nabla)\mathbf{u}\right) &= -\nabla p + \mu \Delta \mathbf{u} + \mathbf{f}, \label{eq:NSmom}\\
+\nabla\cdot\mathbf{u} &= 0, \label{eq:NSinc}
+\end{align}
+with $\mathbf{u}: \Omega \times [0,T] \to \mathbb{R}^3$ velocity, $p: \Omega \times [0,T] \to \mathbb{R}$ pressure, $\rho > 0$ density, $\mu > 0$ dynamic viscosity, $\mathbf{f}$ body force (gravity, usually negligible in arteries).
+
+Boundary conditions for vascular flow:
+\begin{itemize}[noitemsep]
+\item Inlet $\Gamma_{\text{in}}$: $\mathbf{u} = \mathbf{u}_{\text{in}}(\mathbf{x},t)$ (prescribed).
+\item Outlet $\Gamma_{\text{out}}$: $p = p_{\text{out}}$ or a Neumann/Robin condition such as $-p\,\hat{\mathbf{n}} + \mu \nabla\mathbf{u}\cdot\hat{\mathbf{n}} = 0$, or coupled to a Windkessel ODE.
+\item Wall $\Gamma_{\text{w}}$: $\mathbf{u} = \mathbf{0}$ (no-slip, rigid wall).
+\end{itemize}
+
+\paragraph{Takeaway.} The PDE you'll embed in the PINN loss is Equations \eqref{eq:NSmom}--\eqref{eq:NSinc}. The boundary conditions are part of the prior physical knowledge you bring to the inverse problem.
+
+\section{Non-dimensionalisation and scaling}
+
+Let $L$ be a characteristic length (vessel diameter), $U$ a characteristic velocity (mean inlet speed), and $T_c = L/U$ a convective time scale. Non-dimensional variables:
+\[
+\hat{\mathbf{x}} = \mathbf{x}/L, \quad \hat{\mathbf{u}} = \mathbf{u}/U, \quad \hat{t} = t/T_c, \quad \hat{p} = p/(\rho U^2).
+\]
+Substituting into \eqref{eq:NSmom} (no body force) yields, after dropping hats:
+\begin{equation}
+\partial_t \mathbf{u} + (\mathbf{u}\cdot\nabla)\mathbf{u} = -\nabla p + \frac{1}{\mathrm{Re}}\Delta\mathbf{u}, \qquad \mathrm{Re} = \frac{\rho U L}{\mu}.
+\label{eq:NSnondim}
+\end{equation}
+
+\subsection*{Why non-dimensionalisation matters for PINNs}
+Empirically, PINN training is unstable when the residual terms have grossly different magnitudes (Wang \& Perdikaris on loss-balancing). Working in non-dimensional variables makes the residual $\mathcal{O}(1)$ and dramatically improves training. \textbf{Always train PINNs in non-dimensional coordinates.}
+
+\section{Limit regimes}
+
+\subsection*{Stokes flow ($\mathrm{Re} \ll 1$)}
+The convective term $(\mathbf{u}\cdot\nabla)\mathbf{u}$ is negligible; equations linearise to
+\begin{align}
+-\nabla p + \mu \Delta \mathbf{u} = \mathbf{0}, \qquad \nabla\cdot\mathbf{u} = 0. \label{eq:Stokes}
+\end{align}
+Time enters only through boundary conditions; the system is a quasi-steady saddle-point problem. Existence/uniqueness of weak solutions is classical (Ladyzhenskaya, Temam).
+
+This is the regime of the source paper (Papadopoulos--Burganos), and a sensible regime for a first PINN paper because it eliminates one source of training stiffness. \textbf{Recommend: do your initial development here.}
+
+\subsection*{Steady laminar Navier--Stokes}
+Time-derivative dropped, full nonlinearity retained. Existence is known; uniqueness fails at high Re. For arterial mean flow at $\mathrm{Re} \sim$ a few hundred, this regime captures the dominant physics without the cost of full pulsatility.
+
+\subsection*{Pulsatile (Womersley) flow}
+Time-dependent NS with periodic forcing. The \emph{Womersley solution} for laminar flow in a straight pipe driven by a sinusoidal pressure gradient $-\nabla p = G e^{i\omega t}\hat{\mathbf{e}}_z$ is known analytically:
+\[
+u_z(r, t) = \frac{i G}{\omega \rho} \!\left(1 - \frac{J_0(\beta r/R)}{J_0(\beta)}\right)\! e^{i\omega t}, \qquad \beta = i^{3/2}\alpha.
+\]
+Here $J_0$ is a Bessel function of the first kind and $\alpha = R\sqrt{\omega \rho/\mu}$ is the Womersley number. \textit{Project relevance:} useful as an analytical reference solution against which you can test PINN training before committing to numerical CFD.
+
+\section{The vorticity, strain rate, and stress tensor}
+
+\subsection*{Strain rate}
+\[
+\mathbf{D} = \tfrac{1}{2}\!\big(\nabla\mathbf{u} + (\nabla\mathbf{u})^\top\big), \qquad D_{ij} = \tfrac{1}{2}(\partial_i u_j + \partial_j u_i).
+\]
+Symmetric tensor; diagonal components are extensional rates, off-diagonal are shear rates.
+
+\subsection*{Cauchy stress for a Newtonian fluid}
+\[
+\boldsymbol{\sigma} = -p\,\mathbf{I} + 2\mu\,\mathbf{D}.
+\]
+
+\subsection*{Wall shear stress: the precise definition}
+At a wall point with outward unit normal $\hat{\mathbf{n}}$, the traction is $\mathbf{t} = \boldsymbol{\sigma}\cdot\hat{\mathbf{n}} = -p\hat{\mathbf{n}} + 2\mu\,\mathbf{D}\cdot\hat{\mathbf{n}}$. The \textbf{wall shear stress} is the tangential component:
+\begin{equation}
+\boldsymbol{\tau}_w \;=\; \mathbf{t} - (\mathbf{t}\cdot\hat{\mathbf{n}})\,\hat{\mathbf{n}} \;=\; 2\mu\,\big(\mathbf{D}\cdot\hat{\mathbf{n}}\big) - 2\mu\big(\hat{\mathbf{n}}^\top \mathbf{D}\,\hat{\mathbf{n}}\big)\hat{\mathbf{n}}.
+\label{eq:WSS}
+\end{equation}
+Magnitude: $\tau_w = \|\boldsymbol{\tau}_w\|$.
+
+For an axisymmetric pipe, the formula collapses to
+\[
+\tau_w = \mu \left|\frac{\partial u_z}{\partial r}\right|_{r=R},
+\]
+which is what most clinical papers actually compute.
+
+\subsection*{Why WSS is hard from sparse, noisy velocity}
+WSS depends on the \emph{normal derivative of velocity at the wall}. If velocity is observed only at points $\geq h$ away from the wall (with $h \sim$ voxel size), the best you can do without further information is a finite-difference estimate
+\[
+\tau_w \approx \mu \, \frac{|\mathbf{u}(\mathbf{x}_w + h\hat{\mathbf{n}}) - \mathbf{0}|}{h},
+\]
+which is biased low whenever the true near-wall profile is steeper than linear (almost always, near a stenosis). This is the central physical reason 4D-flow MRI underestimates WSS by $40$--$60\%$.
+
+\textbf{The PINN proposition.} A continuous, differentiable surrogate $\hat{\mathbf{u}}_\theta(\mathbf{x})$ trained with the no-slip BC and the NS residual is, in principle, capable of \emph{interpolating into the wall} based on the physics, recovering near-wall gradients that the data alone do not see.
+
+\section{Boundary layers and near-wall asymptotics}
+
+For high-Re flow, define the dimensionless wall distance
+\[
+y^+ \;=\; \frac{y\, u_\tau}{\nu}, \quad u_\tau = \sqrt{\tau_w/\rho}, \quad \nu = \mu/\rho.
+\]
+The near-wall region $y^+ \lesssim 5$ is the \emph{viscous sublayer}, where $u^+ = y^+$ to leading order, i.e.\ velocity grows linearly with wall distance. \textit{Project relevance:} resolving the viscous sublayer requires CFD meshes with the first cell at $y^+ \lesssim 1$ (the source paper does this). 4D-flow MRI never resolves the viscous sublayer of an aortic flow --- voxel size dwarfs $\nu/u_\tau$.
+
+For low-Re vascular flow, viscous effects fill the whole vessel and the boundary layer concept is fuzzier --- but the principle that \emph{velocity gradient is concentrated near the wall} remains.
+
+\section{Idealised stenotic flow: what to expect}
+
+Consider a steady axisymmetric stenosed pipe. The flow exhibits four phases:
+\begin{enumerate}[noitemsep]
+  \item \textbf{Pre-stenotic, fully developed Poiseuille profile.}
+  \item \textbf{Acceleration into the throat:} velocity peaks at the centreline; near-wall gradient steepens; WSS spikes.
+  \item \textbf{Post-stenotic jet and recirculation:} the jet separates, attaches downstream; a recirculation zone forms; WSS goes near zero or negative inside the recirculation, very high in the reattachment region.
+  \item \textbf{Recovery to Poiseuille.}
+\end{enumerate}
+
+In the source paper (Stokes regime, $\mathrm{Re} \ll 1$) recirculation is suppressed; only acceleration and recovery occur. \textbf{Plan.} Start in the Stokes regime; later, if desired, increase Re into the laminar regime where post-stenotic recirculation appears. The recirculation region is the most demanding test of any reconstruction.
+
+\section{Conservation diagnostics: how to sanity-check a reconstruction}
+
+Three integral identities are useful as diagnostics, even if they're already (softly) enforced via the PINN loss:
+
+\subsection*{Mass conservation across cross-sections}
+For any two cross-sections $A_1, A_2$ in an unbranched segment,
+\[
+\int_{A_1} \mathbf{u}\cdot\hat{\mathbf{n}}\,dA \;=\; \int_{A_2} \mathbf{u}\cdot\hat{\mathbf{n}}\,dA.
+\]
+Plot $Q(z)$ along the centreline; deviations from constancy quantify continuity error.
+
+\subsection*{Bifurcation balance}
+At a Y-bifurcation, $Q_{\text{parent}} = Q_{\text{daughter,1}} + Q_{\text{daughter,2}}$.
+
+\subsection*{Pressure drop / dissipation balance}
+For Stokes flow,
+\[
+\Delta P \cdot Q \;=\; 2\mu\!\int_\Omega \mathbf{D}:\mathbf{D}\,dV.
+\]
+Equating LHS and RHS is a strong sanity check.
+
+\textbf{Project relevance.} These integrals are cheap to evaluate from the trained PINN at inference time, and \emph{they double as your reviewer-friendly figures} (see Document~4).
+
+\section{The forward problem vs.\ the inverse problem}
+
+\subsection*{Forward problem (CFD)}
+Given geometry, BCs, and physical parameters, find $(\mathbf{u}, p)$. Solved by FEM/FVM. This is what you do to generate ground truth.
+
+\subsection*{Inverse problem (your PINN)}
+Given \emph{partial, noisy observations} of $\mathbf{u}$ at scattered points, plus the PDE \eqref{eq:NSmom}--\eqref{eq:NSinc} and the no-slip BC, infer the full continuous fields $(\mathbf{u}, p)$ and the derived $\boldsymbol{\tau}_w$.
+
+This is a \textbf{data-assimilation problem}, sibling of variational data assimilation in geophysics. PINNs are one tool; ensemble Kalman filtering, 4D-Var, and Bayesian inversion are alternatives. The PINN advantage is gradient-based optimisation of a flexible, mesh-free surrogate.
+
+\subsection*{Well-posedness considerations (mathematician's note)}
+For the forward Stokes problem with prescribed velocity BC, well-posedness in $H^1(\Omega)\times L^2(\Omega)/\mathbb{R}$ is classical (Babu\v{s}ka--Brezzi). The inverse problem you're solving is generically \emph{ill-posed}: many fields $\mathbf{u}$ approximately fit sparse, noisy data while satisfying the PDE \emph{up to numerical residual}. The PDE acts as a \emph{regulariser}; the no-slip BC as another regulariser; the smoothness of the neural-network parameterisation as yet another. A formal stability estimate would relate observation noise level to recovery error in a Sobolev norm, with constants depending on geometry. This is open territory and a possible secondary mathematical contribution if you wish.
+
+\section{Synthetic 4D-flow MRI: the forward operator}
+
+You will need a forward operator $\mathcal{F}$ that maps a CFD field $\mathbf{u}_{\text{CFD}}$ to a synthetic MRI observation. The standard ingredients:
+
+\subsection*{Spatial sampling on a Cartesian voxel grid}
+Choose voxel edge $\Delta x$. For each voxel centre $\mathbf{x}_v$, define
+\[
+\mathbf{u}_{\text{voxel}}(\mathbf{x}_v) \;=\; \frac{1}{|V_v|}\int_{V_v} \chi_\Omega(\mathbf{x})\,\mathbf{u}_{\text{CFD}}(\mathbf{x}) \, dV,
+\]
+where $V_v$ is the voxel and $\chi_\Omega$ is the indicator of the fluid domain. The averaging over partial-volume voxels (those crossing the wall) is what produces the \emph{partial-volume bias}.
+
+\subsection*{Additive Gaussian noise}
+$\mathbf{u}_{\text{MRI}}(\mathbf{x}_v) = \mathbf{u}_{\text{voxel}}(\mathbf{x}_v) + \boldsymbol{\eta}$, with $\boldsymbol{\eta} \sim \mathcal{N}(\mathbf{0}, \sigma_v^2 \mathbf{I})$. Set $\sigma_v$ to control SNR/VNR.
+
+\subsection*{Optional: aliasing}
+$\mathbf{u}_{\text{MRI}} \;\leftarrow\; \mathrm{wrap}_{\text{VENC}}(\mathbf{u}_{\text{MRI}})$, with the wrap operator defined component-wise.
+
+\subsection*{Optional: displacement artefact}
+For high-velocity flow, sample the underlying field at $\mathbf{x}_v + \mathbf{u}\,\Delta t_{\text{enc}}$ instead of $\mathbf{x}_v$; the small offset depends on encoding time.
+
+\textbf{Recommendation for first paper.} Start with just spatial averaging plus Gaussian noise. Add aliasing and displacement only if reviewers request it or if you want a methodological extension.
+
+\section{Geometric irregularity: how you'll quantify it}
+
+You need a single-number geometric-complexity descriptor (or a small set) so you can make ``geometry irregularity'' an axis of your sensitivity sweep. Candidates:
+
+\begin{itemize}[noitemsep]
+\item \textbf{Stenosis severity} $s$: diameter reduction. The simplest descriptor; the source paper's only one.
+\item \textbf{Stenosis eccentricity} $e \in [0,1]$: 0 = concentric, 1 = fully one-sided.
+\item \textbf{Tortuosity} $\kappa$: integrated curvature divided by chord length.
+\item \textbf{Number of bifurcations / branching topology} (categorical).
+\item \textbf{Surface roughness amplitude} (for synthetic plaque irregularity).
+\end{itemize}
+
+A defensible plan: \textbf{three test geometries} of increasing complexity --- (i) idealised concentric stenosis (source paper geometry), (ii) eccentric stenosis with bifurcation, (iii) one or two patient-specific cases from the Vascular Model Repository. Then your sweep $\{(\Delta x, \sigma_v) \times \text{geometry}\}$ has $\sim 10$ resolution levels $\times \sim 5$ noise levels $\times 3$ geometries $= 150$ runs, fully tractable.
+
+\section{Suggested first-paper assumptions (be explicit about them)}
+
+\begin{enumerate}[noitemsep]
+\item \emph{Fluid:} Newtonian, $\mu = 3.5\times10^{-3}$\,Pa$\cdot$s, $\rho = 1060$\,kg/m$^3$.
+\item \emph{Regime:} Stokes (or low-Re laminar), steady.
+\item \emph{Wall:} rigid, no-slip.
+\item \emph{Geometry:} known exactly (no segmentation error). Document this clearly --- it is a non-trivial assumption that creates a clean separation of error sources.
+\item \emph{Forward operator:} voxel averaging over fluid only, plus i.i.d.\ Gaussian noise. No aliasing, no displacement artefact (note as ``future work'').
+\item \emph{Inlet/outlet BCs:} known (since you generated the CFD). For a more challenging variant, treat them as unknown and let the PINN infer them --- this is what Arzani 2021 does, and it strengthens the paper.
+\end{enumerate}
+
+\textbf{Final takeaway.} You're solving an inverse, ill-posed PDE problem under a noisy partial observation operator on a known geometry. The mathematical content is clear; the empirical content is the systematic sweep over the observation operator's parameters. Both are publishable; the combination is what makes the paper worth citing.
+
+\end{document}
