@@ -72,3 +72,18 @@ ehthumbs.db
 
 # ── Claude Code (local session settings; project settings are committed) ──────
 .claude/settings.local.json
+
+# ── LaTeX build artefacts (e.g. pandoc export of CLAUDE.md) ──────────────────
+*.aux
+*.synctex*
+*.synctex(busy)
+CLAUDE.tex
+CLAUDE.log
+CLAUDE.pdf
+
+# ── R session history ─────────────────────────────────────────────────────────
+.Rhistory
+.RData
+
+# ── Accidental shell-redirect files (e.g. pip install ... >=x.y → "=x.y") ────
+=*
