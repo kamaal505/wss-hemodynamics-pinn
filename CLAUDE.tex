@@ -1,0 +1,700 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\author{}
+\date{\vspace{-2.5em}}
+
+\begin{document}
+
+\section{CLAUDE.md --- hemodyn-pinn
+project}\label{claude.md-hemodyn-pinn-project}
+
+\section{Physics-Informed Neural Network for WSS Recovery from Sparse
+4D-flow
+MRI}\label{physics-informed-neural-network-for-wss-recovery-from-sparse-4d-flow-mri}
+
+\section{}\label{section}
+
+\section{This file is the navigation map for Claude
+Code.}\label{this-file-is-the-navigation-map-for-claude-code.}
+
+\section{It records decisions, calibrated values, and pointers --- not
+subject
+knowledge.}\label{it-records-decisions-calibrated-values-and-pointers-not-subject-knowledge.}
+
+\section{For physics, ML theory, and algorithms, go to
+docs/project\_knowledge/.}\label{for-physics-ml-theory-and-algorithms-go-to-docsproject_knowledge.}
+
+\section{}\label{section-1}
+
+\section{Last updated: 2026-05-18}\label{last-updated-2026-05-18}
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{0. Session startup --- READ THIS
+FIRST}\label{session-startup-read-this-first}
+
+This file is the sole persistent memory for Claude Code across sessions.
+The claude.ai web-app chats are NOT accessible from Claude Code.
+
+\subsubsection{Mandatory first steps}\label{mandatory-first-steps}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Read this entire file.
+\item
+  Read the docs listed in §11 that are relevant to the task. They win
+  over this file.
+\item
+  Check §4 for current phase and next deliverable.
+\item
+  Check §9 for open questions before making assumptions.
+\end{enumerate}
+
+\subsubsection{Where things live}\label{where-things-live}
+
+\begin{longtable}[]{@{}ll@{}}
+\toprule\noalign{}
+What & Where \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Project knowledge docs & docs/project\_knowledge/ (six .tex files) \\
+Mesh statistics & data/geometries/anxplore/mesh\_stats.txt \\
+AnXplore geometries & data/geometries/anxplore/ \\
+Source modules & src/hemodyn\_pinn/ \\
+Pipeline scripts & scripts/ (numbered, run in order) \\
+Figure generation & src/hemodyn\_pinn/viz/ \\
+Hydra configs & configs/ \\
+Tests & tests/ \\
+\end{longtable}
+
+\subsubsection{After a gap}\label{after-a-gap}
+
+Ask ``which files changed since last session?'' then read those files.
+Do not assume the codebase matches this file --- it may be ahead or
+behind.
+
+\subsubsection{Model configuration}\label{model-configuration}
+
+Default: sonnet (claude-sonnet-4-6). Background/fast: haiku
+(claude-haiku-4-5-20251001). Use \texttt{/model\ haiku} for mechanical
+tasks (boilerplate, config stubs). Do not use Opus unless specified.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{1. Project identity}\label{project-identity}
+
+\textbf{Title:} PINN-based Wall Shear Stress Recovery from Sparse, Noisy
+4D-flow MRI\\
+\textbf{Goal:} Recover wall shear fields from synthetic 4D-flow MRI
+(downsampled CFD); characterise dependence on sample density, noise
+level, and geometry irregularity.\\
+\textbf{Output:} Methods + benchmark paper. Primary artefact: open
+benchmark (CFD fields + synthetic MRI inputs + checkpoints). Not a
+clinical validation paper.\\
+\textbf{Target venues:} CMAME, Computers in Biology and Medicine,
+Medical Image Analysis, JCP.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{2. Architectural decisions}\label{architectural-decisions}
+
+\subsubsection{2.1 Data sources}\label{data-sources}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2917}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3750}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Role
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Source
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Notes
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Primary & AnXplore (Goetz et al.~2024, MIT). 101 patient-derived
+aneurysm cases. \url{https://github.com/aurelegoetz/AnXplore} & In
+use \\
+Secondary & Vascular Model Repository (VMR), 2--3 showcase cases.
+\url{https://www.vascularmodel.com} & Phase 2; site was down 2026-05-13,
+re-check before use \\
+Tertiary & AneuX (CC BY-NC --- do NOT redistribute as benchmark);
+AneuriskWeb (CC BY-NC --- comparison figures only) & Only if reviewers
+request cohort breadth \\
+\end{longtable}
+
+We generate our own CFD ground truth. We do NOT use Goetz et al.'s FSI
+outputs (pulsatile FSI vs our steady Stokes).
+
+\subsubsection{2.2 Physics (see doc 02 for
+equations)}\label{physics-see-doc-02-for-equations}
+
+\begin{itemize}
+\tightlist
+\item
+  Flow model: steady incompressible Newtonian Stokes (Re
+  \textless\textless{} 1). Pulsatility, FSI, non-Newtonian: deferred to
+  follow-up paper.
+\item
+  Key parameters: ρ = 1060 kg/m³, μ = 3.5×10⁻³ Pa·s, U\_inlet = 2×10⁻⁵
+  m/s → Re ≈ 0.10.
+\end{itemize}
+
+\subsubsection{2.3 PINN architecture (see doc 03 for full
+spec)}\label{pinn-architecture-see-doc-03-for-full-spec}
+
+\begin{itemize}
+\tightlist
+\item
+  Coordinate-based MLP: input (x,y,z)/L, output (û,v̂,ŵ,p̂). Tanh
+  activations \textbf{only} --- never ReLU (breaks second-order
+  autograd).
+\item
+  Optional: Random Fourier Features encoder; hard no-slip via SDF mask.
+\item
+  Framework: PyTorch 2.x, from-scratch. DeepXDE for prototype only.
+\end{itemize}
+
+\subsubsection{2.4 Loss, WSS computation, training
+recipe}\label{loss-wss-computation-training-recipe}
+
+\begin{itemize}
+\tightlist
+\item
+  Three loss terms: MRI data fit, Stokes PDE residual + continuity,
+  no-slip BC. See doc 03 for formulas and weight defaults.
+\item
+  WSS via autograd on the trained network --- no finite differences. See
+  doc 03.
+\item
+  Optimiser: Adam → L-BFGS. Cosine LR 1e-3→1e-6. Collocation points
+  resampled each epoch. Pressure anchor at one outlet DOF.
+\end{itemize}
+
+\subsubsection{2.5 BHPO --- Phase 3 only}\label{bhpo-phase-3-only}
+
+\begin{itemize}
+\tightlist
+\item
+  Modules: \texttt{src/hemodyn\_pinn/bhpo/}, scripts
+  \texttt{04b\_bhpo\_search.py},
+  \texttt{04c\_train\_pinn\_with\_bhpo.py}.
+\item
+  Do NOT activate until the fixed-HP pipeline runs end-to-end.
+\item
+  hydra-optuna-sweeper DEFERRED (version conflict with Optuna 4.7); add
+  at Phase 3.
+\end{itemize}
+
+\subsubsection{2.6 Toolstack}\label{toolstack}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 2\tabcolsep) * \real{0.5972}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 2\tabcolsep) * \real{0.4028}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Purpose
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Tool
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Deep learning & PyTorch 2.x \\
+CFD solver & FEniCSx (dolfinx 0.10) --- Linux/WSL only, not
+pip-installable \\
+Meshing & gmsh 4.13+ \\
+3D visualisation & PyVista 0.44+ \\
+2D figures & matplotlib 3.9+, seaborn 0.13+ \\
+Mesh I/O & meshio 5.3+ \\
+SDF & libigl 2.5+ \\
+Config management & Hydra 1.3+ \\
+Experiment tracking & Weights \& Biases 0.19+ \\
+HPO (Phase 3) & scikit-optimize 0.10, Optuna 4.7+ \\
+Statistics & pingouin 0.5+ (Bland--Altman, ICC) \\
+Testing & pytest 8.2+ \\
+Linting / types & ruff 0.4+, mypy 1.10 (\textless2.0) \\
+\end{longtable}
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{3. Project tree}\label{project-tree}
+
+\begin{verbatim}
+hemodyn-pinn/
+├── CLAUDE.md
+├── configs/
+│   ├── config.yaml                  ← Hydra root config
+│   ├── geometry/                    ← one .yaml per AnXplore case
+│   ├── cfd/                         ← stokes_default.yaml, ns_steady.yaml
+│   ├── mri/                         ← voxel_0p5mm.yaml … voxel_2p5mm.yaml
+│   ├── model/                       ← pinn_base.yaml, pinn_rff.yaml
+│   ├── bhpo/                        ← search_space.yaml, gp_default.yaml
+│   └── sweep/
+├── src/hemodyn_pinn/
+│   ├── geometry/
+│   │   ├── anxplore_loader.py       ← load AnXplore meshes; boundary extraction
+│   │   ├── vmr_loader.py            ← VMR mesh loader (Phase 2)
+│   │   ├── bulge_scaler.py          ← controlled-severity geometry axis
+│   │   ├── parametric.py            ← idealised stenosis-bifurcation mesh
+│   │   ├── sdf.py                   ← signed distance field for hard no-slip
+│   │   └── meshing.py
+│   ├── cfd/
+│   │   ├── stokes_solver.py         ← FEniCSx P2-P1 steady Stokes (MUMPS)
+│   │   ├── ns_solver.py             ← Navier-Stokes (Phase 2+)
+│   │   └── postprocess.py           ← save/load .npz + XDMF; WSS statistics
+│   ├── mri/
+│   │   ├── operator.py              ← SyntheticMRIOperator: voxel-average + noise
+│   │   ├── voxelise.py              ← VoxelGrid; node-to-voxel assignment
+│   │   └── noise.py                 ← Gaussian noise; sigma_from_vnr
+│   ├── pinn/
+│   │   ├── networks.py              ← MLP, RFFEncoder, PINNNetwork
+│   │   ├── losses.py                ← data / physics / BC / anchor losses
+│   │   ├── sampling.py              ← collocation and wall-BC point sampling
+│   │   ├── trainer.py               ← PINNTrainer + PINNConfig (Adam → L-BFGS)
+│   │   └── inference.py             ← WSS via autograd; velocity prediction
+│   ├── bhpo/                        ← Phase 3; do not activate yet
+│   ├── bayesian/                    ← B-PINN (Phase 4)
+│   ├── baselines/
+│   │   ├── trilinear_fd.py          ← trilinear interpolation + FD WSS baseline
+│   │   └── supervised_mlp.py        ← data-only MLP baseline
+│   ├── eval/
+│   │   ├── field_metrics.py         ← NRMSE, R², MAE
+│   │   ├── wss_metrics.py           ← pointwise relative error, peak WSS error
+│   │   ├── conservation.py          ← flow-rate constancy, bifurcation balance
+│   │   └── bland_altman.py          ← Bland–Altman + ICC
+│   ├── viz/
+│   │   ├── style.py                 ← rcParams, PyVista theme
+│   │   ├── render_3d.py
+│   │   ├── plots_2d.py
+│   │   └── make_figure_N.py         ← one script per paper figure (see doc 04)
+│   └── utils/
+│       ├── io.py
+│       ├── seeds.py                 ← all RNG seeds; never hard-code elsewhere
+│       └── logging.py
+├── scripts/                         ← numbered pipeline; run in order
+│   ├── 01_fetch_geometries.py
+│   ├── 02_run_cfd.py
+│   ├── 03_generate_synthetic_mri.py
+│   ├── 04_train_pinn.py
+│   ├── 04b_bhpo_search.py           ← Phase 3
+│   ├── 04c_train_pinn_with_bhpo.py  ← Phase 3
+│   ├── 05_evaluate.py
+│   ├── 06_run_sweep.py
+│   └── 07_make_all_figures.py
+├── data/                            ← NOT committed to repo
+│   ├── geometries/anxplore/         ← git-cloned AnXplore VTK files
+│   ├── geometries/vmr/              ← manual download
+│   ├── geometries/idealised/        ← generated
+│   ├── cfd/                         ← solver outputs (.npz, XDMF+HDF5)
+│   ├── synthetic_mri/
+│   ├── checkpoints/
+│   ├── bhpo_runs/
+│   └── results/
+├── tests/
+├── notebooks/
+│   ├── 00_sanity_check.ipynb
+│   └── 01_anxplore_exploration.ipynb
+└── paper/
+    ├── main.tex
+    ├── refs.bib
+    └── figures/
+\end{verbatim}
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{4. Phase plan and current
+status}\label{phase-plan-and-current-status}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2055}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.4384}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3562}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Phase
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Scope
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Status
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0 & Project setup, docs, environment & COMPLETE \\
+1.1 & Environment + AnXplore data fetch & COMPLETE \\
+1.2 & anxplore\_loader.py + mesh checks & COMPLETE \\
+1.3 & Stokes CFD on 3--5 cases (FEniCSx) & CODE COMPLETE \\
+1.4 & Synthetic MRI forward operator & COMPLETE \\
+1.5 & Prototype PINN, end-to-end on one case & CODE COMPLETE (awaits CFD
+data) \\
+2 & Core results figures at fixed HPs & not started \\
+3 & BHPO integration + refined results & not started \\
+4 & Ablation, supplementary, paper draft & not started \\
+\end{longtable}
+
+\textbf{Next deliverable:} Run end-to-end on caseC (Linux/WSL required
+for FEniCSx): 1.
+\texttt{python\ scripts/02\_run\_cfd.py\ geometry=caseC} 2.
+\texttt{python\ scripts/03\_generate\_synthetic\_mri.py\ geometry=caseC}
+3. \texttt{python\ scripts/04\_train\_pinn.py\ geometry=caseC}
+
+\subsubsection{Phase completion records}\label{phase-completion-records}
+
+\textbf{Phase 1.3 (2026-05-13):} Stokes solver aligned to doc 06. -
+Pressure sign corrected: \texttt{\_extract\_nodal\_values} negates
+p\_sub (physical = −dolfinx convention). - Inlet BC: Poiseuille
+parabolic profile via collapsed-subspace
+\texttt{Function.interpolate()}. - XDMF+HDF5 export:
+\texttt{export\_xdmf()} and \texttt{load\_cfd\_xdmf()} added to
+postprocess.py. - 84 fast tests pass.
+
+\textbf{Phase 1.4 (2026-05-13):} Synthetic MRI operator. -
+\texttt{mri/voxelise.py}, \texttt{mri/noise.py},
+\texttt{mri/operator.py}. Voxel sizes: 0.5--2.5 mm (5 configs). VNR
+sweep: \{5,10,15,20,30\}. - 26/26 tests pass (Windows).
+
+\textbf{Phase 1.5 (2026-05-14):} Prototype PINN. -
+\texttt{pinn/networks.py}, \texttt{losses.py}, \texttt{sampling.py},
+\texttt{trainer.py}, \texttt{inference.py}. - Seeds added:
+RFF\_SEED=2718, PINN\_COLLOC\_SEED=3141, PINN\_TRAIN\_SEED=9999. - 116
+tests pass (1 dolfinx-skipped, 0 warnings).
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{5. Calibrated parameters}\label{calibrated-parameters}
+
+\subsubsection{Physical constants and
+scales}\label{physical-constants-and-scales}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.4167}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2917}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2917}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Quantity
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Value
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Notes
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+μ (viscosity) & 3.5×10⁻³ Pa·s & Newtonian blood; in
+\texttt{stokes\_solver.MU\_BLOOD} \\
+ρ (density) & 1060 kg/m³ & in \texttt{stokes\_solver.RHO\_BLOOD} \\
+L (length scale) & 0.01628 m & x-span (parent artery diameter); in
+\texttt{stokes\_solver.L\_SCALE} \\
+U\_inlet & 2×10⁻⁵ m/s & → Re ≈ 0.10; confirmed Stokes regime \\
+VTK coordinates & mm & Multiply × 1e-3 for SI before any physical
+computation \\
+\end{longtable}
+
+\subsubsection{AnXplore mesh summary}\label{anxplore-mesh-summary}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.1286}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.1571}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.1857}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.3286}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Case
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Nodes
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Tets
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+z-span (mm)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Notes
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+caseC & 147,432 & 844,320 & 4.050 & Simplest --- start here \\
+caseA & 159,155 & 912,713 & 4.614 & \\
+caseR & 178,675 & 1,028,394 & 6.223 & \\
+caseB & 170,087 & 975,723 & 6.385 & Most complex \\
+full\_dataset & 158,840 & 910,886 & 5.046 & Has 33k explicit tris \\
+\end{longtable}
+
+\textbf{Structural difference:} caseA/B/C/R have no explicit surface
+triangles --- boundary faces extracted from tets in
+\texttt{anxplore\_loader.py}. \texttt{full\_dataset} has 33k explicit
+surface triangles used directly as Γ\_w.
+
+\textbf{Inlet/outlet topology:} Both open faces at y=y\_min, outward
+normal (0,−1,0). Left disk (x\textless0) = inlet; right disk
+(x\textgreater0) = outlet. Detection: n\_y \textless{} −0.9999 at
+y\_min, split at x=0.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{6. Environment and setup}\label{environment-and-setup}
+
+\begin{itemize}
+\item
+  Virtual environment: \texttt{.venv/} at repo root (uv pip).
+\item
+  Python: \texttt{.venv/Scripts/python} (Windows) or
+  \texttt{.venv/bin/python} (Linux/macOS).
+\item
+  \textbf{FEniCSx:} NOT pip/uv installable. Linux/WSL only:
+
+\begin{verbatim}
+sudo add-apt-repository ppa:fenics-packages/fenics && sudo apt install fenicsx
+\end{verbatim}
+\item
+  mypy capped at \textless2.0 (large 2.x wheels cause uv timeout on slow
+  connections).
+\item
+  hydra-optuna-sweeper: commented out in requirements.txt; re-enable at
+  Phase 3.
+\item
+  Shell scripts: Git Bash compatible (no mapfile/stat -c/process
+  substitution).
+\item
+  \textbf{dolfinx 0.10 API:} \texttt{create\_mesh(comm,\ cells,\ e,\ x)}
+  --- element is the 3rd argument, coordinates are 4th. (Swapped vs ≤
+  0.8.)
+\end{itemize}
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{7. Mandatory tests}\label{mandatory-tests}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3472}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.4028}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Test file
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Covers
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Required by
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+test\_anxplore\_loader.py & Mesh loading, boundary extraction & Phase
+1.2 \\
+test\_mri\_operator.py & Forward operator correctness + noise stats &
+Phase 1.4 \\
+test\_losses.py & Each loss term in isolation & Phase 1.5 \\
+test\_inference.py & WSS-from-network path (autograd → τ\_w) & Phase
+1.5 \\
+test\_bulge\_scaler.py & Controlled severity axis & Phase 2 \\
+test\_bhpo.py & BHPO smoke test & Phase 3 \\
+\end{longtable}
+
+Do not mark a phase complete without its tests passing.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{8. Code conventions}\label{code-conventions}
+
+\begin{itemize}
+\tightlist
+\item
+  Python 3.11+. Type hints throughout. NumPy-style docstrings.
+\item
+  \textbf{Never} ReLU in PINN backbone. \textbf{Never} jet colormaps.
+\item
+  All RNG seeds in \texttt{utils/seeds.py} --- never hard-code.
+\item
+  Prefer functional/pure code; classes for stateful components only.
+\item
+  Figure output: vector PDF or 600 dpi PNG. One script per paper figure
+  (see doc 04).
+\item
+  Colormaps: viridis/magma/cividis (sequential); RdBu\_r (diverging,
+  signed quantities only).
+\end{itemize}
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{9. Open questions}\label{open-questions}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2329}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3288}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.4384}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+\#
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Item
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Status
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+1 & Re target for Phase 1 CFD & CLOSED: U=2×10⁻⁵ m/s → Re≈0.10 \\
+2 & full\_dataset contents & CLOSED: 101 cases (Fluid\_0 \ldots{}
+Fluid\_100) \\
+3 & Boundary extraction for caseA/B/C/R & CLOSED: implemented in
+anxplore\_loader.py \\
+4 & AnXplore inlet/outlet topology & CLOSED: see §5 \\
+5 & hydra-optuna-sweeper Phase 3 version & DEFERRED: stable 1.2.0 caps
+Optuna \textless3.0; check for 1.3.x at Phase 3 \\
+\end{longtable}
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{10. Key references}\label{key-references}
+
+\begin{itemize}
+\tightlist
+\item
+  Goetz et al.~(2024). AnXplore. \emph{Front. Bioeng. Biotechnol.} DOI:
+  10.3389/fbioe.2024.1433811
+\item
+  Tancik et al.~(2020). Fourier features / spectral bias.
+  \emph{NeurIPS.} arXiv:2006.10739
+\item
+  Wang, Wang, Perdikaris (2021). Adaptive loss weights for PINNs.
+  \emph{CMAME.} arXiv:2012.10047
+\item
+  Karniadakis et al.~(2021). Physics-informed machine learning.
+  \emph{Nat. Rev.~Phys.}
+\item
+  Yang, Meng, Karniadakis (2021). B-PINNs. \emph{JCP.} arXiv:2003.06097
+\item
+  Snoek, Larochelle, Adams (2012). Bayesian optimisation of ML.
+  \emph{NeurIPS.}
+\end{itemize}
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{11. Project knowledge
+documents}\label{project-knowledge-documents}
+
+Go to these for all subject-matter detail. Do NOT copy their content
+into this file.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2361}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.2361}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.5278}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Doc
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+File
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Read when\ldots{}
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+01 & 01\_hemodynamics\_glossary.tex & Unfamiliar hemodynamics/imaging
+term (WSS, TAWSS, OSI, VNR, \ldots) \\
+02 & 02\_fluid\_dynamics\_primer.tex & NS equations, Stokes limit, WSS
+formula, non-dimensionalisation, MRI forward operator \\
+03 & 03\_ml\_concepts.tex & Network architecture, RFF, loss terms,
+training pitfalls, optimiser recipe, B-PINNs, metrics \\
+04 & 04\_research\_artefacts\_and\_figures.tex & Any paper figure or
+table (exact spec for all 12 figures + 3 tables) \\
+05 & 05\_results\_interpretation.tex & Interpreting metrics, writing
+Discussion, clinical relevance claims \\
+06 & 06\_fenicsx\_cfd\_implementation.tex & Any FEniCSx/dolfinx
+implementation question \\
+\end{longtable}
+
+These files are READ-ONLY reference material. Do not modify them.
+
+\end{document}

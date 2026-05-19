@@ -30,8 +30,9 @@ try:
     import dolfinx.mesh as dmesh
     from dolfinx.fem.petsc import LinearProblem
     from mpi4py import MPI
+    from petsc4py import PETSc as _PETSc
     import ufl
-    from basix.ufl import element as basix_element, mixed_element
+    from basix.ufl import element as basix_element
 
     _DOLFINX_AVAILABLE = True
 except ImportError:
@@ -62,17 +63,16 @@ class StokesConfig:
     u_inlet:
         Mean normal velocity at the inlet [m/s].
         Default 2e-5 m/s gives Re ≈ 0.10 (well in Stokes regime).
-    petsc_ksp_type, petsc_pc_type, petsc_pc_solver:
-        PETSc linear-solver options.  MUMPS direct solver is the robust choice.
+    ksp_rtol, ksp_max_it:
+        MINRES convergence tolerance and iteration cap (doc 06 §5).
     save_vtk:
         Write VTK output files in addition to the .npz solution.
     """
 
     mu: float = MU_BLOOD
     u_inlet: float = 2e-5
-    petsc_ksp_type: str = "preonly"
-    petsc_pc_type: str = "lu"
-    petsc_pc_solver: str = "mumps"
+    ksp_rtol: float = 1e-10
+    ksp_max_it: int = 500
     save_vtk: bool = False
 
 
@@ -259,8 +259,8 @@ def _create_dolfinx_mesh(anxplore_mesh: AnxploreMesh):
     domain = dmesh.create_mesh(
         MPI.COMM_WORLD,
         cells,
+        coord_el,
         points_m,
-        ufl.Mesh(coord_el),
     )
     return domain
 
@@ -377,7 +377,7 @@ def _compute_wss(
     # Interpolate ∇u into DG(0) (one 3×3 matrix per tet = constant gradient).
     DG0_el = basix_element("DG", "tetrahedron", 0, shape=(3, 3))
     DG0 = dfem.functionspace(domain, DG0_el)
-    grad_expr = dfem.Expression(ufl.grad(u_sub), DG0.element.interpolation_points())
+    grad_expr = dfem.Expression(ufl.grad(u_sub), DG0.element.interpolation_points)
     grad_fn = dfem.Function(DG0)
     grad_fn.interpolate(grad_expr)
 
@@ -474,6 +474,7 @@ def _compute_wss_fn_scalar(domain, u_h, facet_tags, mu: float):
     prob = LinearProblem(
         ufl.inner(u_, v) * ds_wall,
         ufl.inner(wss_mag, v) * ds_wall,
+        petsc_options_prefix="wss_scalar_",
         petsc_options={"ksp_type": "cg", "pc_type": "jacobi", "ksp_rtol": 1e-12},
     )
     return prob.solve()
@@ -503,6 +504,7 @@ def _compute_wss_fn_vector(domain, u_h, facet_tags, mu: float):
     prob = LinearProblem(
         ufl.inner(u_, v) * ds_wall,
         ufl.inner(wss_vec, v) * ds_wall,
+        petsc_options_prefix="wss_vector_",
         petsc_options={"ksp_type": "cg", "pc_type": "jacobi", "ksp_rtol": 1e-12},
     )
     return prob.solve()
@@ -566,83 +568,122 @@ def solve_stokes(
 
     fdim = domain.topology.dim - 1
 
-    # ── Taylor-Hood P2-P1 mixed function space ──────────────────────────────
+    # ── Taylor-Hood P2-P1 function spaces (separate for nested block system) ─
     gdim = 3
     V_el = basix_element("Lagrange", "tetrahedron", 2, shape=(gdim,))
     Q_el = basix_element("Lagrange", "tetrahedron", 1)
-    W_space = dfem.functionspace(domain, mixed_element([V_el, Q_el]))
+    V = dfem.functionspace(domain, V_el)
+    Q = dfem.functionspace(domain, Q_el)
 
-    V0 = W_space.sub(0)     # velocity subspace
+    # ── Variational form — nested block system (doc 06 §5) ──────────────────
+    u, v = ufl.TrialFunction(V), ufl.TestFunction(V)
+    p, q = ufl.TrialFunction(Q), ufl.TestFunction(Q)
 
-    # ── Variational form ────────────────────────────────────────────────────
-    u, p = ufl.TrialFunctions(W_space)
-    v, q = ufl.TestFunctions(W_space)
+    f = dolfinx.fem.Constant(domain, dolfinx.default_scalar_type((0.0, 0.0, 0.0)))
+    zero_q = dolfinx.fem.Constant(domain, dolfinx.default_scalar_type(0.0))
 
-    a = (
-        cfg.mu * ufl.inner(ufl.grad(u), ufl.grad(v)) * ufl.dx
-        - p * ufl.div(v) * ufl.dx
-        - q * ufl.div(u) * ufl.dx
-    )
-    f = dolfinx.fem.Constant(
-        domain,
-        dolfinx.default_scalar_type((0.0, 0.0, 0.0)),
-    )
-    L = ufl.inner(f, v) * ufl.dx
+    a = [
+        [cfg.mu * ufl.inner(ufl.grad(u), ufl.grad(v)) * ufl.dx, -p * ufl.div(v) * ufl.dx],
+        [-q * ufl.div(u) * ufl.dx,                               None                      ],
+    ]
+    L = [ufl.inner(f, v) * ufl.dx, ufl.inner(zero_q, q) * ufl.dx]
 
-    # ── Dirichlet boundary conditions ───────────────────────────────────────
+    # Block-diagonal preconditioner: (1/μ) ∫ p q dx for the pressure block
+    a_p11 = (1.0 / cfg.mu) * p * q * ufl.dx
+    a_p = [[a[0][0], None], [None, a_p11]]
+
+    # ── Dirichlet boundary conditions ────────────────────────────────────────
+    # BCs go directly on V — no sub-space collapse needed.
     # Wall: u = 0
     wall_facets = facet_tags.find(MARKER_WALL)
-    bc_wall = dfem.dirichletbc(
-        np.zeros(gdim, dtype=dolfinx.default_scalar_type),
-        dfem.locate_dofs_topological(V0, fdim, wall_facets),
-        V0,
-    )
+    u_zero = dfem.Function(V)
+    wall_dofs = dfem.locate_dofs_topological(V, fdim, wall_facets)
+    bc_wall = dfem.dirichletbc(u_zero, wall_dofs)
 
     # Inlet: parabolic Poiseuille profile (doc 06 §4).
     # u_y(r) = U_max * max(0, 1 - r²/R²),  U_max = 2 * U_mean,
     # velocity direction (0, -1, 0) (inward at the y=0 cut).
     inlet_facets = facet_tags.find(MARKER_INLET)
-    V0_collapsed, _ = W_space.sub(0).collapse()
-    u_inlet_fn = dfem.Function(V0_collapsed)
+    u_inlet_fn = dfem.Function(V)
     _R_sq = (2.0e-3) ** 2          # tube radius² in m² (R = 2 mm = 0.002 m)
     _U_max = 2.0 * cfg.u_inlet     # peak centreline velocity
 
+    # Pre-compute inlet disk centroid from the boundary-part masks (metres).
+    # dolfinx interpolate() passes ALL DOF coords to the callable, so computing
+    # xc/zc from x.mean() inside the closure gives the global mesh centroid
+    # (~0), not the inlet disk centre (~-6.14 mm in x).  That makes r² >> R²
+    # at every inlet DOF and clamps the Poiseuille profile to zero, causing
+    # u ≡ 0 everywhere and hence WSS ≡ 0.
+    _inlet_centroids_m = mesh.wall_centroids_mm[bp.inlet_mask] * 1e-3
+    _xc = float(_inlet_centroids_m[:, 0].mean())
+    _zc = float(_inlet_centroids_m[:, 2].mean())
+
     def _inlet_profile(x: np.ndarray) -> np.ndarray:
         # x shape: (3, N_dof) — dolfinx passes all DOF coords at once
-        xc = float(x[0].mean())
-        zc = float(x[2].mean())
-        r2 = (x[0] - xc) ** 2 + (x[2] - zc) ** 2
+        r2 = (x[0] - _xc) ** 2 + (x[2] - _zc) ** 2
         speed = _U_max * np.maximum(0.0, 1.0 - r2 / _R_sq)
         vals = np.zeros((3, x.shape[1]), dtype=dolfinx.default_scalar_type)
         vals[1] = -speed   # negative y = into domain
         return vals
 
     u_inlet_fn.interpolate(_inlet_profile)
-    inlet_dofs = dfem.locate_dofs_topological(
-        (W_space.sub(0), V0_collapsed), fdim, inlet_facets
-    )
-    bc_inlet = dfem.dirichletbc(u_inlet_fn, inlet_dofs, W_space.sub(0))
+    inlet_dofs = dfem.locate_dofs_topological(V, fdim, inlet_facets)
+    bc_inlet = dfem.dirichletbc(u_inlet_fn, inlet_dofs)
 
     bcs = [bc_wall, bc_inlet]
 
-    # ── Solve ───────────────────────────────────────────────────────────────
+    # ── Solve: MINRES + block-diagonal preconditioner (doc 06 §5) ───────────
     problem = LinearProblem(
         a,
         L,
+        kind="nest",
         bcs=bcs,
+        P=a_p,
+        petsc_options_prefix="stokes_",
         petsc_options={
-            "ksp_type": cfg.petsc_ksp_type,
-            "pc_type": cfg.petsc_pc_type,
-            "pc_factor_mat_solver_type": cfg.petsc_pc_solver,
-            "mat_mumps_icntl_24": 1,    # detect near-null pivot (pressure)
-            "mat_mumps_icntl_25": 0,    # do not compute null-space vectors
+            "ksp_type":                      "minres",
+            "ksp_rtol":                      cfg.ksp_rtol,
+            "ksp_max_it":                    cfg.ksp_max_it,
+            "ksp_monitor":                   "",
+            "ksp_norm_type":                 "unpreconditioned",
+            "pc_type":                       "fieldsplit",
+            "pc_fieldsplit_type":            "additive",
+            "pc_fieldsplit_detect_saddle_point": "",   # auto-split MATNEST blocks
+            "fieldsplit_0_ksp_type":         "preonly",
+            "fieldsplit_0_pc_type":          "gamg",
+            "fieldsplit_1_ksp_type":         "preonly",
+            "fieldsplit_1_pc_type":          "jacobi",
         },
     )
-    wh = problem.solve()
 
-    # ── Extract sub-functions ───────────────────────────────────────────────
-    u_sub = wh.sub(0).collapse()
-    p_sub = wh.sub(1).collapse()
+    # Pressure nullspace: uniform constant over Q (Stokes pressure defined up to a constant)
+    p_null = dfem.Function(Q)
+    p_null.x.array[:] = 1.0
+    p_null.x.scatter_forward()
+    p_null.x.petsc_vec.scale(1.0 / p_null.x.petsc_vec.norm())
+    u_null = dfem.Function(V)   # zero velocity component of null vector
+    nested_null = _PETSc.Vec().createNest(
+        [u_null.x.petsc_vec, p_null.x.petsc_vec], comm=domain.comm
+    )
+    nsp = _PETSc.NullSpace().create(vectors=[nested_null])
+    problem.A.setNullSpace(nsp)
+
+    # Mark SPD blocks so GAMG uses its optimal algebraic-multigrid path
+    A00 = problem.A.getNestSubMatrix(0, 0)
+    A00.setOption(_PETSc.Mat.Option.SPD, True)
+    P00 = problem.P_mat.getNestSubMatrix(0, 0)
+    P00.setOption(_PETSc.Mat.Option.SPD, True)
+    P11 = problem.P_mat.getNestSubMatrix(1, 1)
+    P11.setOption(_PETSc.Mat.Option.SPD, True)
+
+    u_sub, p_sub = problem.solve()
+
+    reason = problem.solver.getConvergedReason()
+    if reason <= 0:
+        raise RuntimeError(
+            f"Stokes MINRES solver did not converge (PETSc reason {reason}). "
+            "Increase ksp_max_it or relax ksp_rtol in StokesConfig."
+        )
 
     # ── Nodal values ────────────────────────────────────────────────────────
     velocity_nodes, pressure_nodes = _extract_nodal_values(domain, mesh, u_sub, p_sub)
@@ -657,9 +698,17 @@ def solve_stokes(
         from hemodyn_pinn.cfd.postprocess import export_xdmf  # noqa: PLC0415
         wss_mag_fn = _compute_wss_fn_scalar(domain, u_sub, facet_tags, cfg.mu)
         wss_vec_fn = _compute_wss_fn_vector(domain, u_sub, facet_tags, cfg.mu)
+
+        # dolfinx 0.10: write_function requires degree == mesh geometry degree (1).
+        # u_sub is P2 — interpolate down to P1 for XDMF only.
+        P1_vel_el = basix_element("Lagrange", "tetrahedron", 1, shape=(gdim,))
+        P1_vel = dfem.functionspace(domain, P1_vel_el)
+        u_p1 = dfem.Function(P1_vel)
+        u_p1.interpolate(u_sub)
+
         export_xdmf(
             pathlib.Path(out_dir), domain, facet_tags,
-            u_sub, p_sub, wss_mag_fn, wss_vec_fn,
+            u_p1, p_sub, wss_mag_fn, wss_vec_fn,
             metadata={
                 "case_id": mesh.case_id,
                 "mu_Pa_s": cfg.mu,

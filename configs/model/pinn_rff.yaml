@@ -1,9 +1,8 @@
+# @package _global_
 # PINN with Random Fourier Features encoder (ablation variant).
 # Inherits all training defaults; only the architecture differs.
 # See doc 03 §3 and Tancik et al. 2020.
 # Practical defaults: D=128-256, sigma tuned in {1, 2, 5, 10}.
-
-# @package _global_
 
 model:
   n_hidden: 128
