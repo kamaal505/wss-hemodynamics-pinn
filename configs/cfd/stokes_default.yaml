@@ -6,9 +6,8 @@
 mu: 3.5e-3          # Pa·s  Newtonian blood viscosity
 u_inlet: 2.0e-5     # m/s   inlet normal velocity  → Re ≈ 0.10
 
-# PETSc linear solver — MUMPS direct solver (handles pressure nullspace).
-petsc_ksp_type: preonly
-petsc_pc_type: lu
-petsc_pc_solver: mumps
+# MINRES + block-diagonal preconditioner (doc 06 §5).
+ksp_rtol: 1.0e-6
+ksp_max_it: 2000
 
 save_vtk: false     # set true to also write a .vtu file

@@ -1,9 +1,8 @@
+# @package _global_
 # PINN base configuration — plain MLP, tanh activations, no RFF.
 # All training defaults from CLAUDE.md §3.6 and doc 03.
 # Override individual keys on the command line:
 #   python scripts/04_train_pinn.py model=pinn_base training.n_adam=20000
-
-# @package _global_
 
 model:
   n_hidden: 128

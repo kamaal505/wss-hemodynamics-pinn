@@ -48,7 +48,7 @@ def main(cfg: DictConfig) -> None:
 
     # ── Imports (deferred so Hydra loads before dolfinx) ───────────────────
     from hemodyn_pinn.geometry.anxplore_loader import load_anxplore
-    from hemodyn_pinn.cfd.stokes_solver import StokesConfig, solve_stokes
+    from hemodyn_pinn.cfd.stokes_solver import StokesConfig, solve_stokes, RHO_BLOOD, L_SCALE
     from hemodyn_pinn.cfd.postprocess import save_solution, wss_statistics
 
     # ── Load mesh ───────────────────────────────────────────────────────────
@@ -69,20 +69,19 @@ def main(cfg: DictConfig) -> None:
     solver_cfg = StokesConfig(
         mu=float(cfg.cfd.mu),
         u_inlet=float(cfg.cfd.u_inlet),
-        petsc_ksp_type=cfg.cfd.petsc_ksp_type,
-        petsc_pc_type=cfg.cfd.petsc_pc_type,
-        petsc_pc_solver=cfg.cfd.petsc_pc_solver,
+        ksp_rtol=float(cfg.cfd.ksp_rtol),
+        ksp_max_it=int(cfg.cfd.ksp_max_it),
         save_vtk=bool(cfg.cfd.save_vtk),
     )
     log.info(
         "Solver: mu=%.2e Pa·s  u_inlet=%.2e m/s  Re≈%.3f",
-        solver_cfg.mu, solver_cfg.u_inlet, solver_cfg.re_number if hasattr(solver_cfg, "re_number") else
-        1060 * solver_cfg.u_inlet * 0.01628 / solver_cfg.mu,
+        solver_cfg.mu, solver_cfg.u_inlet,
+        RHO_BLOOD * solver_cfg.u_inlet * L_SCALE / solver_cfg.mu,
     )
 
     # ── Solve ────────────────────────────────────────────────────────────────
     outdir = _root / cfg.output.base_dir / cfg.geometry.case_id
-    log.info("Solving Stokes (MUMPS direct solver) …")
+    log.info("Solving Stokes (MINRES + block-diagonal preconditioner) …")
     t1 = time.perf_counter()
     # out_dir triggers XDMF+HDF5 export (doc 06 §7) alongside the .npz below.
     solution = solve_stokes(mesh, solver_cfg, out_dir=outdir)
