@@ -76,6 +76,52 @@ def sample_wall_bc(
     return wall_pts_nondim[idx]
 
 
+def sample_collocation_biased(
+    interior_pts_nondim: np.ndarray,
+    near_wall_pts_nondim: np.ndarray,
+    n: int,
+    wall_bias_frac: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Draw collocation points with a fraction concentrated near the wall.
+
+    ``wall_bias_frac`` of the n points are drawn from ``near_wall_pts_nondim``
+    (a pre-computed subset of interior nodes close to the vessel wall); the
+    remainder come from the full interior pool.  Overlap between the two pools
+    is acceptable — duplicate physics residual points are harmless.
+
+    Parameters
+    ----------
+    interior_pts_nondim:
+        (M, 3) full interior collocation pool.
+    near_wall_pts_nondim:
+        (K, 3) near-wall subset of interior nodes (K ≤ M).
+    n:
+        Total number of collocation points requested.
+    wall_bias_frac:
+        Fraction in [0, 1) drawn from the near-wall pool.
+    rng:
+        NumPy random generator (fresh per epoch).
+
+    Returns
+    -------
+    np.ndarray
+        (n, 3) collocation points.
+    """
+    K = near_wall_pts_nondim.shape[0]
+    M = interior_pts_nondim.shape[0]
+
+    n_near = min(int(n * wall_bias_frac), K)
+    n_bulk = min(n - n_near, M)
+
+    idx_near = rng.choice(K, size=n_near, replace=False)
+    idx_bulk = rng.choice(M, size=n_bulk, replace=False)
+
+    return np.concatenate(
+        [near_wall_pts_nondim[idx_near], interior_pts_nondim[idx_bulk]], axis=0
+    )
+
+
 def make_pressure_anchor(outlet_pts_nondim: np.ndarray) -> np.ndarray:
     """Return a single outlet point for pressure anchoring.
 

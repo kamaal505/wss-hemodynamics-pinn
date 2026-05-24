@@ -1,0 +1,23 @@
+# @package bhpo
+# BHPO search and retrain configuration.
+
+# ── Search settings (04b_bhpo_search.py) ────────────────────────────────────
+n_calls: 50           # total objective evaluations (initial random + GP-guided)
+n_initial_points: 10  # random evaluations before GP starts fitting
+
+# Per-trial training budget (short; winner is retrained at full budget in 04c)
+n_adam_trial: 20000
+n_lbfgs_trial: 500
+
+# Fraction of wall faces held out for WSS NRMSE evaluation
+val_frac: 0.2
+
+device: "cpu"   # override to "cuda" if GPU available
+
+# ── Retrain settings (04c_train_pinn_with_bhpo.py) ──────────────────────────
+# Always read winning HPs from the caseC BHPO run.
+source_case_id: caseC
+
+# Full retrain budget applied in 04c.
+n_adam_full: 50000
+n_lbfgs_full: 5000

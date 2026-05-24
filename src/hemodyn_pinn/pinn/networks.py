@@ -5,19 +5,27 @@ All modules operate in non-dimensional coordinates:
 
 Network output is always (û, v̂, ŵ, p̂) — four scalars per query point.
 
-Activations: tanh throughout.  NEVER ReLU (breaks second-order autograd).
+Supported activations: "tanh", "swish", "gelu".  NEVER ReLU (breaks second-order autograd).
 """
 
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 
 from hemodyn_pinn.utils.seeds import RFF_SEED, PINN_TRAIN_SEED
+
+# Maps activation name → nn.Module class (must be smooth / C² for autograd).
+_ACTIVATIONS: dict[str, type[nn.Module]] = {
+    "tanh": nn.Tanh,
+    "swish": nn.SiLU,   # SiLU = Swish (x·σ(x)); non-saturating, smooth
+    "gelu": nn.GELU,
+}
+ActivationName = Literal["tanh", "swish", "gelu"]
 
 # Physical scales (SI)
 L_SCALE: float = 0.01628   # m   (parent-artery diameter, from CLAUDE.md §6)
@@ -113,7 +121,7 @@ class RFFEncoder(nn.Module):
 
 
 class MLP(nn.Module):
-    """Fully-connected network with tanh activations.
+    """Fully-connected network with configurable smooth activations.
 
     Parameters
     ----------
@@ -125,6 +133,8 @@ class MLP(nn.Module):
         Number of neurons per hidden layer.
     n_layers:
         Number of hidden layers.
+    activation:
+        Activation function name: "tanh", "swish", or "gelu".
     """
 
     def __init__(
@@ -133,11 +143,17 @@ class MLP(nn.Module):
         out_dim: int = 4,
         n_hidden: int = 128,
         n_layers: int = 4,
+        activation: ActivationName = "tanh",
     ) -> None:
         super().__init__()
-        layers: list[nn.Module] = [nn.Linear(in_dim, n_hidden), nn.Tanh()]
+        if activation not in _ACTIVATIONS:
+            raise ValueError(
+                f"Unknown activation '{activation}'. Choose from {list(_ACTIVATIONS)}."
+            )
+        act_cls = _ACTIVATIONS[activation]
+        layers: list[nn.Module] = [nn.Linear(in_dim, n_hidden), act_cls()]
         for _ in range(n_layers - 1):
-            layers += [nn.Linear(n_hidden, n_hidden), nn.Tanh()]
+            layers += [nn.Linear(n_hidden, n_hidden), act_cls()]
         layers.append(nn.Linear(n_hidden, out_dim))
         self.net = nn.Sequential(*layers)
 
@@ -168,6 +184,8 @@ class PINNNetwork(nn.Module):
         D (number of RFF frequency samples; ignored if use_rff=False).
     rff_sigma:
         Bandwidth σ for the RFF encoder (ignored if use_rff=False).
+    activation:
+        Activation function: "tanh", "swish", or "gelu".
     seed:
         Seed for deterministic weight initialisation.
     """
@@ -179,6 +197,7 @@ class PINNNetwork(nn.Module):
         use_rff: bool = False,
         rff_features: int = 128,
         rff_sigma: float = 1.0,
+        activation: ActivationName = "tanh",
         seed: int = PINN_TRAIN_SEED,
     ) -> None:
         super().__init__()
@@ -194,7 +213,10 @@ class PINNNetwork(nn.Module):
             in_dim = 3
 
         torch.manual_seed(seed)
-        self.mlp = MLP(in_dim=in_dim, out_dim=4, n_hidden=n_hidden, n_layers=n_layers)
+        self.mlp = MLP(
+            in_dim=in_dim, out_dim=4, n_hidden=n_hidden,
+            n_layers=n_layers, activation=activation,
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass.

@@ -6,6 +6,7 @@ defaults:
   - cfd: stokes_default
   - mri: voxel_1p0mm
   - model: pinn_base
+  - bhpo: default
   - _self_
 
 # Project root (resolved by the script itself; kept here for documentation).
@@ -15,3 +16,9 @@ output:
   base_dir: data/cfd
   mri_base_dir: data/synthetic_mri
   pinn_base_dir: data/checkpoints
+  results_base_dir: data/results
+
+eval:
+  run_suffix: bhpo   # checkpoint suffix: "bhpo" or e.g. "adam50000"
+  device: "cpu"
+  wss_batch_size: 5000   # wall points per batch for WSS autograd (memory control)
