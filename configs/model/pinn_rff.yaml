@@ -10,6 +10,7 @@ model:
   use_rff: true
   rff_features: 128    # D: number of RFF frequency samples; output dim = 2D
   rff_sigma: 2.0       # bandwidth sigma; tune in {1, 2, 5, 10}
+  activation: tanh     # tanh | swish | gelu
 
 training:
   n_colloc: 10000
@@ -21,6 +22,7 @@ training:
   lambda_data: 1.0
   lambda_phys: 1.0
   lambda_bc: 10.0
-  lambda_anchor: 10.0
+  lambda_anchor: 1.0
   checkpoint_every: 1000
   device: "cpu"
+  wall_bias_frac: 0.0  # fraction of collocation pts drawn from near-wall pool

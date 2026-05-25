@@ -24,6 +24,7 @@ from hemodyn_pinn.pinn.losses import total_loss
 from hemodyn_pinn.pinn.sampling import (
     epoch_rng,
     sample_collocation,
+    sample_collocation_biased,
     sample_wall_bc,
 )
 from hemodyn_pinn.utils.seeds import PINN_COLLOC_SEED
@@ -78,6 +79,11 @@ class PINNConfig:
     checkpoint_every: int = 1_000
     device: str = "cpu"
     colloc_seed: int = PINN_COLLOC_SEED
+    wall_bias_frac: float = 0.0
+    # Fraction of collocation points drawn from a near-wall interior subset.
+    # 0.0 = uniform (default); 0.3 means 30 % from nearest-wall nodes.
+    # The near-wall pool is the bottom-20th-percentile by min-distance-to-wall,
+    # pre-computed once in PINNTrainer.__init__ using a scipy KDTree.
 
 
 class PINNTrainer:
@@ -131,6 +137,25 @@ class PINNTrainer:
         self._interior_np = interior_pts_nondim
         self._wall_np = wall_pts_nondim
 
+        # Pre-compute near-wall interior subset for biased collocation sampling.
+        self._near_wall_np: Optional[np.ndarray] = None
+        if cfg.wall_bias_frac > 0.0:
+            try:
+                from scipy.spatial import KDTree  # noqa: PLC0415
+                tree = KDTree(wall_pts_nondim)
+                dists, _ = tree.query(interior_pts_nondim)
+                threshold = float(np.percentile(dists, 20))
+                mask = dists <= threshold
+                self._near_wall_np = interior_pts_nondim[mask]
+                log.info(
+                    "Wall-biased sampling: %d near-wall pts (%.0f%% of interior, d≤%.4f)",
+                    int(mask.sum()), 100.0 * mask.mean(), threshold,
+                )
+            except ImportError:
+                log.warning(
+                    "scipy not found; wall_bias_frac ignored, using uniform sampling."
+                )
+
         self.history: list[dict] = []
         self.best_loss: float = float("inf")
         self.best_state: Optional[dict] = None
@@ -149,7 +174,16 @@ class PINNTrainer:
         """Sample collocation and wall points for one epoch."""
         rng = epoch_rng(self.cfg.colloc_seed, epoch)
 
-        x_c_np = sample_collocation(self._interior_np, self.cfg.n_colloc, rng)
+        if self.cfg.wall_bias_frac > 0.0 and self._near_wall_np is not None:
+            x_c_np = sample_collocation_biased(
+                self._interior_np,
+                self._near_wall_np,
+                self.cfg.n_colloc,
+                self.cfg.wall_bias_frac,
+                rng,
+            )
+        else:
+            x_c_np = sample_collocation(self._interior_np, self.cfg.n_colloc, rng)
         x_w_np = sample_wall_bc(self._wall_np, self.cfg.n_wall_bc, rng)
 
         x_c = torch.tensor(x_c_np, dtype=torch.float32, device=self.device)

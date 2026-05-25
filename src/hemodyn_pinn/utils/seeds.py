@@ -30,3 +30,9 @@ PINN_COLLOC_SEED: int = 3141
 
 # Seed for PyTorch network weight initialisation.
 PINN_TRAIN_SEED: int = 9999
+
+# Seed for the scikit-optimize GP surrogate random state.
+BHPO_SEED: int = 7777
+
+# Seed for the train/validation wall-face split in BHPOObjective.
+BHPO_VAL_SEED: int = 4321

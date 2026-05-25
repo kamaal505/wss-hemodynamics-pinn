@@ -117,9 +117,13 @@ def main(cfg: DictConfig) -> None:
         use_rff=cfg.model.use_rff,
         rff_features=cfg.model.rff_features,
         rff_sigma=cfg.model.rff_sigma,
+        activation=cfg.model.activation,
     )
     n_params = sum(p.numel() for p in net.parameters())
-    log.info("Network: %d parameters  use_rff=%s", n_params, cfg.model.use_rff)
+    log.info(
+        "Network: %d parameters  use_rff=%s  activation=%s",
+        n_params, cfg.model.use_rff, cfg.model.activation,
+    )
 
     # ── Configure training ───────────────────────────────────────────────────
     train_cfg = PINNConfig(
@@ -135,6 +139,7 @@ def main(cfg: DictConfig) -> None:
         lambda_anchor=cfg.training.lambda_anchor,
         checkpoint_every=cfg.training.checkpoint_every,
         device=cfg.training.device,
+        wall_bias_frac=float(cfg.training.wall_bias_frac),
     )
 
     run_id = f"{case_id}_{voxel_tag}_adam{cfg.training.n_adam}"
