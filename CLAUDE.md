@@ -184,19 +184,31 @@ hemodyn-pinn/
 | 2 | Core results figures at fixed HPs | not started |
 | 4 | Ablation, supplementary, paper draft | not started |
 
-**Next deliverable (Linux/WSL):**
+**Next deliverable (M3 Pro / Linux/WSL):**
 ```
+# Standard (baseline with Fixes E + D):
 python scripts/04b_bhpo_search.py geometry=caseC
 python scripts/04c_train_pinn_with_bhpo.py geometry=caseC
-python scripts/04c_train_pinn_with_bhpo.py geometry=caseA
+
+# With hard SDF + vector potential (Fixes A + B, recommended):
+python scripts/04b_bhpo_search.py geometry=caseC bhpo.use_hard_sdf=true bhpo.use_vec_potential=true
+python scripts/04c_train_pinn_with_bhpo.py geometry=caseC bhpo.use_hard_sdf=true bhpo.use_vec_potential=true
+python scripts/04c_train_pinn_with_bhpo.py geometry=caseA bhpo.use_hard_sdf=true bhpo.use_vec_potential=true
+
 python scripts/05_evaluate.py geometry=caseC
 python scripts/05_evaluate.py geometry=caseA
 python scripts/06_run_sweep.py
 python scripts/07_make_all_figures.py
 ```
 
-**Latest phase record (eval + figure pipeline, 2026-05-25):**  
-`eval/` module (NRMSE, R², MAE, BA, ICC, conservation), `viz/` module (matplotlib + PyVista), `05_evaluate.py`, `06_run_sweep.py`, `07_make_all_figures.py`. `config.yaml` updated: `output.results_base_dir`, `eval.run_suffix`, `eval.wss_batch_size`.  
+**Latest phase record (Fixes E,A,B,D + Optuna BHPO, 2026-06-03):**  
+Implemented four physics/architecture improvements:
+- **Fix E**: `wall_bias_frac=0.4` — near-wall collocation sampling (free, highest single-knob impact)  
+- **Fix A**: Hard SDF no-slip (`geometry/sdf.py` + `WallSDF`; `networks.py` `use_hard_sdf`; analytical WSS in `inference.py`)  
+- **Fix B**: Vector potential div-free network (`networks.py` `use_vec_potential`, `_curl`, `forward_raw`; `losses.py` `skip_div_loss`)  
+- **Fix D**: Self-adaptive loss weights (`losses.py` `SelfAdaptiveLoss`; gradient reversal in `trainer.py`)  
+BHPO stack rewritten: Optuna TPE (`bhpo/search.py`), Optuna-native suggest (`bhpo/space.py`), MPS auto-detect + arch flags (`bhpo/objective.py`). Config tuned for M3 Pro: `n_adam_trial=10000`, `device="auto"`, `backend="optuna"`.  
+Full derivation and caveats: `notes/implementation_fixes_E_A_B_D.md`.  
 Earlier phase records: `git log --oneline`.
 
 ---
@@ -293,3 +305,4 @@ Do not mark a phase complete without its tests passing.
 | 04 | 04_research_artefacts_and_figures.tex | All paper figures (12 figs + 3 tables) |
 | 05 | 05_results_interpretation.tex | Metric interpretation, Discussion writing |
 | 06 | 06_fenicsx_cfd_implementation.tex | Any FEniCSx/dolfinx question |
+| 07 | 07_research_question_and_motivation.tex | Project overview, clinical problem, research questions C1–C4, prior-work positioning |

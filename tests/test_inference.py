@@ -17,9 +17,11 @@ from torch import Tensor
 from hemodyn_pinn.pinn.inference import (
     compute_velocity_jacobian,
     compute_wss,
+    compute_wss_auto,
+    compute_wss_hard_sdf,
     predict_velocity_field,
 )
-from hemodyn_pinn.pinn.networks import MU, U_SCALE, L_SCALE, PINNNetwork
+from hemodyn_pinn.pinn.networks import L_SCALE, MU, U_SCALE, PINNNetwork
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +210,7 @@ class TestPredictVelocityField:
         class UnitNet(nn.Module):
             """Always outputs (1, 1, 1, 1) in non-dim."""
 
-            def forward(self, x: Tensor) -> Tensor:
+            def forward(self, x: Tensor, sdf_vals=None) -> Tensor:
                 return torch.ones(x.shape[0], 4)
 
         net = UnitNet()
@@ -218,3 +220,134 @@ class TestPredictVelocityField:
         assert u_ms.mean().item() == pytest.approx(U_SCALE, rel=1e-6)
         p_scale = MU * U_SCALE / L_SCALE
         assert p_pa.mean().item() == pytest.approx(p_scale, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Analytic networks for hard-SDF WSS tests
+# ---------------------------------------------------------------------------
+
+
+class _ConstantTangentialNet(nn.Module):
+    """Raw velocity = (1, 0, 0) — purely tangential to n = (0, 1, 0).
+
+    Expected hard-SDF WSS: |τ| = μ(U/L) * |(1,0,0) − 0*(0,1,0)| = μU/L.
+    """
+
+    use_hard_sdf: bool = True
+
+    def forward_raw(self, x: Tensor) -> Tensor:
+        N = x.shape[0]
+        return torch.cat([
+            torch.ones(N, 1),
+            torch.zeros(N, 1),
+            torch.zeros(N, 1),
+            torch.zeros(N, 1),
+        ], dim=1)
+
+    def forward(self, x: Tensor, sdf_vals=None) -> Tensor:
+        return self.forward_raw(x)
+
+
+class _NormalAlignedNet(nn.Module):
+    """Raw velocity = (0, 1, 0) — parallel to n = (0, 1, 0).
+
+    Expected hard-SDF WSS: tangential component = 0 → |τ| = 0.
+    """
+
+    use_hard_sdf: bool = True
+
+    def forward_raw(self, x: Tensor) -> Tensor:
+        N = x.shape[0]
+        return torch.cat([
+            torch.zeros(N, 1),
+            torch.ones(N, 1),
+            torch.zeros(N, 1),
+            torch.zeros(N, 1),
+        ], dim=1)
+
+    def forward(self, x: Tensor, sdf_vals=None) -> Tensor:
+        return self.forward_raw(x)
+
+
+# ---------------------------------------------------------------------------
+# Fix A — compute_wss_hard_sdf
+# ---------------------------------------------------------------------------
+
+
+class TestComputeWSSHardSDF:
+    def test_output_shapes(self, wall_setup: tuple) -> None:
+        net = PINNNetwork(n_hidden=16, n_layers=2, use_hard_sdf=True, seed=0)
+        x_wall, normals = wall_setup
+        tau, mag = compute_wss_hard_sdf(net, x_wall, normals)
+        assert tau.shape == (5, 3)
+        assert mag.shape == (5,)
+
+    def test_magnitude_nonneg(self, wall_setup: tuple) -> None:
+        net = PINNNetwork(n_hidden=16, n_layers=2, use_hard_sdf=True, seed=0)
+        x_wall, normals = wall_setup
+        _, mag = compute_wss_hard_sdf(net, x_wall, normals)
+        assert (mag >= 0).all()
+
+    def test_no_nan(self, wall_setup: tuple) -> None:
+        net = PINNNetwork(n_hidden=16, n_layers=2, use_hard_sdf=True, seed=0)
+        x_wall, normals = wall_setup
+        tau, mag = compute_wss_hard_sdf(net, x_wall, normals)
+        assert not torch.isnan(tau).any()
+        assert not torch.isnan(mag).any()
+
+    def test_known_tangential_velocity(self) -> None:
+        """u_raw = (1,0,0), n = (0,1,0) → |WSS| = μ(U/L) exactly."""
+        net = _ConstantTangentialNet()
+        x_wall = torch.rand(4, 3)
+        normals = torch.zeros(4, 3); normals[:, 1] = 1.0
+        _, mag = compute_wss_hard_sdf(net, x_wall, normals)
+        expected = MU * U_SCALE / L_SCALE
+        assert float(mag.mean()) == pytest.approx(expected, rel=1e-5)
+
+    def test_normal_velocity_gives_zero_wss(self) -> None:
+        """u_raw parallel to n → tangential component = 0 → WSS = 0."""
+        net = _NormalAlignedNet()
+        x_wall = torch.rand(4, 3)
+        normals = torch.zeros(4, 3); normals[:, 1] = 1.0
+        _, mag = compute_wss_hard_sdf(net, x_wall, normals)
+        assert mag.abs().max().item() == pytest.approx(0.0, abs=1e-7)
+
+    def test_wss_purely_tangential(self) -> None:
+        """The WSS vector must have zero normal component."""
+        net = PINNNetwork(n_hidden=16, n_layers=2, use_hard_sdf=True, seed=2)
+        x_wall, normals = torch.rand(8, 3), torch.zeros(8, 3)
+        normals[:, 1] = 1.0
+        tau, _ = compute_wss_hard_sdf(net, x_wall, normals)
+        normal_dot = (tau * normals).sum(dim=1)
+        assert normal_dot.abs().max().item() == pytest.approx(0.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Fix A — compute_wss_auto dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestComputeWSSAuto:
+    def test_dispatches_to_hard_sdf_path(self, wall_setup: tuple) -> None:
+        """With use_hard_sdf=True, auto must agree with compute_wss_hard_sdf."""
+        net = PINNNetwork(n_hidden=16, n_layers=2, use_hard_sdf=True, seed=0)
+        x_wall, normals = wall_setup
+        _, mag_auto   = compute_wss_auto(net, x_wall, normals)
+        _, mag_direct = compute_wss_hard_sdf(net, x_wall, normals)
+        assert torch.allclose(mag_auto, mag_direct, atol=1e-7)
+
+    def test_dispatches_to_standard_path(self, wall_setup: tuple) -> None:
+        """Without use_hard_sdf, auto must agree with the standard autograd path."""
+        net = PINNNetwork(n_hidden=16, n_layers=2, use_hard_sdf=False, seed=0)
+        x_wall, normals = wall_setup
+        _, mag_auto   = compute_wss_auto(net, x_wall, normals)
+        _, mag_direct = compute_wss(net, x_wall, normals)
+        assert torch.allclose(mag_auto, mag_direct, atol=1e-7)
+
+    def test_output_shapes(self) -> None:
+        net = PINNNetwork(n_hidden=16, n_layers=2, seed=0)
+        x_wall = torch.rand(7, 3)
+        normals = torch.nn.functional.normalize(torch.rand(7, 3), dim=1)
+        tau, mag = compute_wss_auto(net, x_wall, normals)
+        assert tau.shape == (7, 3)
+        assert mag.shape == (7,)

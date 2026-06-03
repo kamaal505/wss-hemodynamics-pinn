@@ -122,6 +122,11 @@ def main(cfg: DictConfig) -> None:
     u_obs_nondim = to_nondim_velocity(mri_obs.velocity_ms)
     log.info("MRI observations: %d voxels", x_data_nondim.shape[0])
 
+    # ── Architecture flags (must match the BHPO run) ─────────────────────────
+    use_hard_sdf         = bool(cfg.bhpo.get("use_hard_sdf", False))
+    use_vec_potential    = bool(cfg.bhpo.get("use_vec_potential", False))
+    use_adaptive_weights = bool(cfg.bhpo.get("use_adaptive_weights", False))
+
     # ── Build network with BHPO-winning architecture ─────────────────────────
     net = PINNNetwork(
         n_hidden=best_hp["n_hidden"],
@@ -130,15 +135,25 @@ def main(cfg: DictConfig) -> None:
         rff_features=128,
         rff_sigma=best_hp["rff_sigma"],
         activation=best_hp["activation"],
+        use_hard_sdf=use_hard_sdf,
+        use_vec_potential=use_vec_potential,
     )
     n_params = sum(p.numel() for p in net.parameters())
     log.info(
-        "Network: %d params | layers=%d hidden=%d act=%s rff=%s",
+        "Network: %d params | layers=%d hidden=%d act=%s rff=%s "
+        "hard_sdf=%s vec_pot=%s adaptive=%s",
         n_params, best_hp["n_layers"], best_hp["n_hidden"],
         best_hp["activation"], best_hp["use_rff"],
+        use_hard_sdf, use_vec_potential, use_adaptive_weights,
     )
 
     # ── Configure full retrain ───────────────────────────────────────────────
+    # Resolve device the same way as the BHPO search.
+    from hemodyn_pinn.bhpo.search import auto_device
+    retrain_device = str(cfg.bhpo.device)
+    if retrain_device == "auto":
+        retrain_device = auto_device()
+
     train_cfg = PINNConfig(
         n_colloc=best_hp["n_colloc"],
         n_wall_bc=2_000,
@@ -151,8 +166,11 @@ def main(cfg: DictConfig) -> None:
         lambda_bc=best_hp["lambda_bc"],
         lambda_anchor=1.0,
         checkpoint_every=int(cfg.training.checkpoint_every),
-        device=str(cfg.bhpo.device),
+        device=retrain_device,
         wall_bias_frac=best_hp["wall_bias_frac"],
+        use_hard_sdf=use_hard_sdf,
+        use_vec_potential=use_vec_potential,
+        use_adaptive_weights=use_adaptive_weights,
     )
 
     run_id = f"{case_id}_{voxel_tag}_bhpo"
@@ -166,6 +184,7 @@ def main(cfg: DictConfig) -> None:
             f, indent=2,
         )
 
+    wall_pts_m = sol["wall_centroids_m"][sol["wall_mask"].astype(bool)]
     trainer = PINNTrainer(
         net=net,
         cfg=train_cfg,
@@ -174,6 +193,7 @@ def main(cfg: DictConfig) -> None:
         anchor_pt_nondim=anchor_nondim,
         x_data=x_data_nondim,
         u_obs_nondim=u_obs_nondim,
+        wall_pts_m=wall_pts_m if use_hard_sdf else None,
         out_dir=out_dir,
     )
 

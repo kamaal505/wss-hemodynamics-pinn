@@ -1,0 +1,393 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\titleformat{\section}{\large\bfseries\color{blue!40!black}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\title{\bfseries Research Question and Motivation\\[0.3em]
+\large Why this project exists, what it is trying to answer, and how the pieces fit together}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Purpose of this document}
+This document states the clinical problem, explains why existing methods fail, formulates
+the research questions precisely, and describes the methodology at a level that makes the
+connection between individual coding decisions and the scientific goal explicit.
+Read this when you need to reorient after a long gap, when writing the Introduction or
+Discussion, or when deciding whether a proposed change serves the paper's argument.
+
+\tableofcontents
+\newpage
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{The clinical problem: WSS as a biomarker}
+
+\subsection*{Why the vessel wall matters}
+
+The inner surface of every blood vessel is lined by a single-cell layer, the
+\emph{endothelium}.  Endothelial cells do not merely form a passive barrier; they
+continuously sense the mechanical environment of the flowing blood and respond
+biologically.  The dominant mechanical signal is \textbf{wall shear stress} (WSS),
+the tangential component of the viscous traction exerted by the fluid on the wall:
+\begin{equation}
+    \boldsymbol{\tau}_w
+    = 2\mu\,\bigl(\mathbf{D}(\mathbf{u})\cdot\hat{\mathbf{n}}\bigr)
+      - 2\mu\bigl(\hat{\mathbf{n}}^\top \mathbf{D}(\mathbf{u})\,\hat{\mathbf{n}}\bigr)\hat{\mathbf{n}},
+    \qquad
+    \mathbf{D} = \tfrac{1}{2}(\nabla\mathbf{u} + \nabla\mathbf{u}^\top),
+    \label{eq:wss_def}
+\end{equation}
+where $\hat{\mathbf{n}}$ is the outward unit normal at the wall, $\mu$ the dynamic
+viscosity, and $\mathbf{D}$ the strain-rate tensor evaluated at the wall.
+The scalar magnitude $\tau_w = \|\boldsymbol{\tau}_w\|$ is what most clinical studies report.
+
+\subsection*{What WSS drives clinically}
+
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\textbf{Condition} & \textbf{Mechanobiological link to WSS} \\
+\midrule
+Atherosclerosis
+  & Chronically low WSS ($\lesssim 0.4$\,Pa) promotes pro-inflammatory gene expression,
+    foam-cell accumulation, and plaque formation.  High WSS ($\gtrsim 2$\,Pa) is athero-protective. \\[4pt]
+Plaque rupture
+  & Very high WSS ($\gtrsim 4$\,Pa) near a stenosis throat erodes the fibrous cap;
+    the rupture event triggers myocardial infarction or stroke. \\[4pt]
+Intracranial aneurysm
+  & Both very high WSS (wall degradation) and very low WSS (inflammatory
+    remodelling) are associated with aneurysm growth and rupture.
+    Time-averaged WSS (TAWSS) and the oscillatory shear index (OSI)
+    are established risk biomarkers. \\[4pt]
+Surgical planning
+  & Bypass and stent placement alter the WSS distribution downstream.
+    Pre-operative WSS prediction guides device design. \\
+\bottomrule
+\end{tabularx}
+
+\medskip
+The endothelial response is local and spatially heterogeneous: a region of
+$1\,\text{mm}^2$ at low WSS surrounded by regions at high WSS can initiate a lesion
+that a spatially-averaged measurement would miss entirely.  \emph{Spatial resolution
+in WSS maps therefore directly affects clinical utility.}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Current measurement methods and their limitations}
+
+\subsection*{4D-flow MRI}
+Phase-contrast 4D-flow MRI encodes blood velocity in all three spatial directions
+over the cardiac cycle.  It is non-invasive, requires no contrast agent (in some
+protocols), and is available on modern clinical scanners.  For a scalar field at
+frequency $f$, the velocity-to-noise ratio is
+\[
+    \mathrm{VNR} = \frac{\bar{u}}{\sigma_v},
+    \qquad
+    \sigma_v \propto \frac{1}{\mathrm{VENC} \cdot \sqrt{N_{\text{acq}}}},
+\]
+where VENC is the velocity encoding range and $N_{\text{acq}}$ the number of signal
+averages.  Clinical 4D-flow acquisitions typically achieve VNR of 5--20 at voxel
+sizes of 1.5--2.5\,mm (isotropic).
+
+\subsection*{Why 4D-flow WSS is unreliable}
+
+WSS requires evaluating $\nabla\mathbf{u}$ at the wall.  Given a velocity field
+sampled on a voxel grid of size $h$, the best available estimator without further
+information is a first-order finite difference:
+\[
+    \tau_w \;\approx\; \mu\,\frac{|\mathbf{u}(\mathbf{x}_w + h\hat{\mathbf{n}})
+                         - \mathbf{0}|}{h}.
+\]
+This estimator has two compounding failure modes.
+\begin{enumerate}[noitemsep]
+\item \textbf{Discretisation bias.}
+    The true near-wall velocity profile is superlinear (accelerating toward the wall),
+    so the first-order difference underestimates the true gradient.
+    Near a stenosis throat, where velocity is highest and the profile is steepest,
+    underestimation reaches 40--60\% even with noiseless data.
+
+\item \textbf{Noise amplification.}
+    Differencing two noisy values with step size $h$ amplifies noise by $\sigma_v/h$.
+    At $h = 1.5\,\text{mm}$ and $\sigma_v = 3\,\text{cm/s}$, the WSS noise floor is
+    $\mu\,\sigma_v/h \sim 3.5 \times 10^{-3} \times 0.03 / 0.0015 \approx 0.07\,\text{Pa}$,
+    comparable to or exceeding the physiological signal in small vessels.
+\end{enumerate}
+
+\noindent
+Consequently, no current non-invasive method yields WSS accurate enough for
+risk-stratification of individual patients.  Computational fluid dynamics (CFD) on
+patient-specific geometries is accurate but requires vessel segmentation, mesh
+generation, boundary-condition specification, and hours of computation per case.
+
+\subsection*{What is missing}
+
+A method that is (a)~non-invasive, (b)~patient-specific, (c)~computationally
+tractable, and (d)~accurate enough to support individual-level clinical decisions.
+Physics-informed neural networks are a candidate for bridging the gap between the
+sparse/noisy MRI observation and the high-resolution WSS field.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{The PINN proposition}
+
+\subsection*{The inverse problem}
+
+Let $\Omega \subset \mathbb{R}^3$ be the vessel lumen (known from segmentation),
+$\Gamma_w$ the vessel wall, $\Gamma_{\text{in}}$/$\Gamma_{\text{out}}$ the inlet/outlet
+faces.  The forward problem is Stokes flow:
+\begin{align}
+    -\nabla p + \mu\,\Delta\mathbf{u} &= \mathbf{0} \quad \text{in } \Omega,
+    \label{eq:stokes_mom} \\
+    \nabla\cdot\mathbf{u} &= 0 \quad \text{in } \Omega,
+    \label{eq:stokes_cont} \\
+    \mathbf{u} &= \mathbf{0} \quad \text{on } \Gamma_w,
+    \label{eq:stokes_noslip} \\
+    \mathbf{u} &= \mathbf{u}_{\text{in}} \quad \text{on } \Gamma_{\text{in}}.
+    \label{eq:stokes_inlet}
+\end{align}
+
+The \emph{inverse} problem is: given noisy, spatially averaged observations
+$\{(\mathbf{x}_i, \tilde{\mathbf{u}}_i)\}_{i=1}^{N_d}$ — the MRI voxel centres and
+their velocity readings — recover the full velocity field $\mathbf{u}(\mathbf{x})$ in
+$\Omega$, and in particular its normal gradient at $\Gamma_w$.
+
+\subsection*{Why PINNs are appropriate}
+
+A PINN parameterises the velocity and pressure fields as a neural network
+$(\hat{\mathbf{u}}_\theta, \hat{p}_\theta) = f_\theta(\mathbf{x})$ and minimises
+\begin{equation}
+    \mathcal{L}(\theta)
+    = \lambda_{\text{data}}\,\mathcal{L}_{\text{data}}
+    + \lambda_{\text{phys}}\,\mathcal{L}_{\text{phys}}
+    + \lambda_{\text{bc}}\,\mathcal{L}_{\text{bc}}
+    + \lambda_{\text{anchor}}\,\mathcal{L}_{\text{anchor}},
+    \label{eq:pinn_loss}
+\end{equation}
+\end{equation}
+where each term is a mean-squared residual (see \texttt{doc~03} for the exact formulas).
+The physics terms $\mathcal{L}_{\text{phys}}$ and $\mathcal{L}_{\text{bc}}$ act as a
+physics-based regulariser on the inverse problem: they prevent the network from fitting
+the noisy data with a velocity field that violates mass conservation or the no-slip
+condition.
+
+Once trained, WSS is recovered by automatic differentiation of the network — not by
+finite-differencing the MRI data.  The network can, in principle, interpolate into the
+wall boundary layer using the physical prior, recovering near-wall gradients that the
+sparse observations alone cannot provide.
+
+\subsection*{The fundamental assumption}
+
+The PINN approach is only valid if the physical model (Stokes equations, rigid wall,
+no-slip, steady inlet profile) is a sufficiently accurate representation of the true
+flow.  This project deliberately operates in the Stokes regime (Re\,$\approx$\,0.10)
+to maximise physical fidelity and isolate the reconstruction problem from modelling
+error.  Pulsatility, fluid--structure interaction, and non-Newtonian rheology are
+deferred to a follow-up paper.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Research questions}
+
+The paper is structured around four headline claims, each corresponding to a concrete
+scientific question.
+
+\paragraph{C1 — Feasibility.}
+\textit{Can PINN-based WSS reconstruction from synthetic 4D-flow MRI achieve clinically
+meaningful accuracy across a representative range of vascular geometries and operating
+conditions?}
+
+This is answered by Figures~5 and~8 (WSS maps and Bland--Altman agreement) and
+Table~2 (aggregate metrics).  A positive answer requires WSS NRMSE $< 0.20$ and
+peak-WSS error $< 25$\% at at least one clinically plausible operating point.
+
+\paragraph{C2 — Operating envelope.}
+\textit{Where is the boundary in the (voxel size, VNR) plane separating reliable from
+unreliable WSS recovery, and how does this boundary depend on vessel geometry?}
+
+This is the central artefact of the paper: the sensitivity heatmap (Figure~6).
+``Reliable'' is defined operationally as WSS NRMSE\,$<$\,20\% on the vessel-wall
+surface (a threshold that, from doc~05, corresponds to the range where population-level
+studies are feasible).  The boundary is a curve in the 2D operating space; its
+position relative to the clinical 4D-flow operating range (voxels 1.5--2.5\,mm,
+VNR 5--15, shaded box on the same figure) is the key empirical result.
+
+\paragraph{C3 — Methodological improvement.}
+\textit{Do architectural choices (Random Fourier Features encoding, wall-biased
+collocation sampling) significantly extend the reliable operating region, and by how
+much?}
+
+This is the ablation (Figure~10) that turns the paper from an evaluation into a method
+contribution.  The mechanism is spectral bias: a plain MLP has an implicit low-frequency
+bias (Wang \& Perdikaris, 2021) that prevents it from resolving the high-frequency
+near-wall gradient.  RFF encoding and wall-biased sampling are targeted mitigations.
+
+\paragraph{C4 — Calibrated uncertainty (optional, Phase~4).}
+\textit{Do Bayesian PINNs (B-PINNs) produce spatially calibrated uncertainty estimates
+over the WSS field, with high predicted variance correlating with large reconstruction
+error?}
+
+This claim is answered by Figure~11 (calibration plot and uncertainty surface map).
+It is optional because it requires the B-PINN module (Phase~4) and adds substantial
+training cost.  If included, it substantially raises the paper's impact.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Methodology overview}
+
+\subsection*{Step 1 — CFD ground truth}
+Steady Stokes CFD is solved on patient-derived intracranial aneurysm geometries from
+the AnXplore dataset (Goetz et al.\ 2024) using FEniCSx with P1-P1 Brezzi-Pitkäranta
+elements.  The output is a high-resolution velocity field $\mathbf{u}^*$ and WSS map
+$\tau_w^*$ that serve as the ``answer key'' for the reconstruction.
+
+\subsection*{Step 2 — Synthetic MRI forward operator}
+The CFD velocity field is passed through a synthetic MRI operator that mimics the
+effect of a real scanner:
+\[
+    \tilde{\mathbf{u}}_i
+    = \frac{1}{|V_i|}\int_{V_i} \mathbf{u}^*(\mathbf{x})\,d\mathbf{x}
+      + \boldsymbol{\epsilon}_i, \qquad
+    \boldsymbol{\epsilon}_i \sim \mathcal{N}(\mathbf{0},\,\sigma_v^2 \mathbf{I}),
+\]
+where $V_i$ is the $i$-th voxel volume and $\sigma_v$ is determined by a target VNR.
+This is done for all combinations of five voxel sizes
+(0.5, 1.0, 1.5, 2.0, 2.5\,mm) and five VNR levels (30, 20, 15, 10, 5).
+
+\subsection*{Step 3 — PINN training}
+A coordinate-based MLP $f_\theta: \hat{\mathbf{x}} \mapsto (\hat{u},\hat{v},\hat{w},\hat{p})$
+(non-dimensional) is trained by minimising \eqref{eq:pinn_loss} with Adam followed by
+L-BFGS.  Hyperparameters ($\lambda_{\text{phys}}$, $\lambda_{\text{bc}}$, network
+width and depth, learning rate, RFF bandwidth $\sigma$) are selected by Bayesian
+hyperparameter optimisation (BHPO) on a reference geometry (caseC) with a
+20\%-held-out validation set of wall faces.  The winning configuration is then retrained
+at full budget and applied to all other geometries.
+
+\subsection*{Step 4 — WSS recovery and evaluation}
+WSS is computed by automatic differentiation of the trained network at wall-centroid
+coordinates:
+\[
+    \hat{\boldsymbol{\tau}}_w(\mathbf{x}_w)
+    = 2\mu\,\frac{U}{L}\Bigl(
+        \hat{\mathbf{D}}_\theta(\hat{\mathbf{x}}_w)\cdot\hat{\mathbf{n}}
+        - (\hat{\mathbf{n}}^\top\hat{\mathbf{D}}_\theta(\hat{\mathbf{x}}_w)\hat{\mathbf{n}})\hat{\mathbf{n}}
+      \Bigr),
+    \qquad
+    \hat{\mathbf{D}}_\theta = \tfrac{1}{2}(\nabla_{\hat{x}} f_\theta + \nabla_{\hat{x}} f_\theta^\top).
+\]
+The reconstruction $\hat{\tau}_w$ is compared to the CFD ground truth $\tau_w^*$ using
+NRMSE, $R^2$, peak-WSS relative error, Bland--Altman statistics (bias, limits of
+agreement), and ICC(1,1).  A conservation diagnostic (inlet/outlet flow-rate proxy)
+verifies physical consistency.
+
+\subsection*{Step 5 — Systematic sweep and figures}
+All (geometry, voxel size, VNR) combinations are evaluated and the metrics collected
+into a CSV.  The figure pipeline generates the sensitivity heatmaps (Figure~6), the WSS
+comparison maps (Figure~5), and the Bland--Altman panels (Figure~8) automatically.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{The contribution in one paragraph}
+
+This project produces: (i) an open benchmark of CFD ground truth and synthetic 4D-flow
+MRI observations at controlled (voxel, VNR) operating points, evaluated on multiple
+patient-derived intracranial geometries; (ii) a validated PINN-based WSS recovery
+pipeline whose accuracy is characterised over the full clinical 4D-flow operating
+range; (iii) a quantified (voxel, VNR) phase diagram that directly answers the
+clinically actionable question of what MRI acquisition quality is needed for
+reliable WSS reconstruction; and (iv) an ablation demonstrating the effect of
+architectural choices (RFF encoding) on the phase diagram boundary.  The result is
+either a positive statement (``current clinical 4D-flow is sufficient for reliable
+PINN-based WSS recovery in this geometry class'') or a design target (``acquisitions
+with voxel $\leq X$\,mm and VNR $\geq Y$ are required'') — both of which are
+concrete, falsifiable, and useful to the imaging community.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Positioning against prior work}
+
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\textbf{Method} & \textbf{Reference} & \textbf{How this project differs} \\
+\midrule
+Trilinear interp.\ + FD WSS
+  & Standard clinical pipeline
+  & Baseline; fails at clinical voxel sizes (§2). \\[4pt]
+Divergence-free smoothing
+  & Ong et al.\ 2015
+  & Reduces noise but does not impose PDE;
+    no systematic operating-envelope characterisation. \\[4pt]
+PaLMA / PC-MRI super-resolution
+  & Fathi et al.\ 2020
+  & Supervised CNN; requires paired training data;
+    not physics-constrained. \\[4pt]
+IP-PINN / PINN for 4D-flow
+  & Arzani et al.\ 2021,
+    Kissas et al.\ 2020
+  & No systematic sweep over acquisition parameters;
+    no open benchmark. \\[4pt]
+\textbf{This work}
+  & ---
+  & Systematic (voxel, VNR) phase diagram on patient-derived geometries;
+    BHPO-tuned PINN; open benchmark release. \\
+\bottomrule
+\end{tabularx}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{How to read the results}
+
+The five-rung framework from \texttt{doc~05} applies to every number you report.
+Two specific translations are worth memorising before writing the Discussion.
+
+\begin{description}[leftmargin=0pt]
+\item[NRMSE $< 0.10$\,($10$\,\%)]
+    RMS WSS error $\leq 10$\% of the RMS reference.  In absolute terms on these
+    geometries this is $\lesssim 0.05$\,Pa.  Enables individual-patient risk
+    stratification (comparable to inter-acquisition reproducibility of well-optimised
+    4D-flow protocols).
+\item[NRMSE $0.10$--$0.20$]
+    Enables population-level analyses and retrospective cohort studies, but not
+    individual clinical decisions.
+\item[NRMSE $0.20$--$0.40$]
+    Qualitative pattern recognition only.  Can identify high-WSS vs.\ low-WSS regions
+    but not quantify magnitudes.
+\item[NRMSE $> 0.40$]
+    Not meaningfully better than a constant-field prediction.  Report as a failure
+    mode; do not claim clinical utility.
+\end{description}
+
+The Phase~1.5 baseline (fixed hyperparameters, $\lambda_{\text{bc}} = 10$) achieved
+NRMSE\,$= 1.661$ — well into the failure regime.  The root cause (BC over-weighting
+driving the model toward zero velocity everywhere) has been diagnosed and corrected
+by lowering $\lambda_{\text{anchor}}$ to 1.0 and making $\lambda_{\text{phys}}$,
+$\lambda_{\text{bc}}$ BHPO search dimensions.
+See \texttt{notes/results/baseline\_caseC\_1mm.md} for the full record.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Open scientific questions}
+
+\begin{enumerate}
+\item \textbf{Stokes vs.\ Navier--Stokes.}  The Stokes assumption (Re\,$\ll 1$) holds for
+small arterioles and may be an over-simplification for carotid or intracranial
+bifurcations at peak systole (Re $\sim$ 200--600).  A brief NS comparison on one
+geometry would bound the modelling error.
+
+\item \textbf{Spectral bias and RFF bandwidth selection.}  The Wang--Perdikaris NTK analysis
+predicts that an RFF encoder with bandwidth $\sigma$ matched to the dominant spatial
+frequency of the near-wall gradient will yield the largest benefit.  That optimal
+$\sigma$ should be approximately $1/\delta$ where $\delta$ is the boundary-layer
+thickness in non-dimensional units.  This can be tested directly.
+
+\item \textbf{Geometry transfer of BHPO HPs.}  The winning hyperparameters from the caseC
+BHPO search are applied to caseA.  Whether the optimal HP configuration is
+geometry-specific or transferable is an empirical question that will be partially
+answered by the sweep (comparing caseC and caseA NRMSE at the same HP set).
+
+\item \textbf{Pulsatile extension.}  The steady Stokes model ignores the Womersley
+pulsatility characteristic of physiological flows.  A time-dependent PINN on one
+geometry with a synthetic pulsatile inlet profile is a natural Phase~3/4 extension.
+\end{enumerate}
+
+\end{document}

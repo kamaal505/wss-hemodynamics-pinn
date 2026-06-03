@@ -22,6 +22,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from hemodyn_pinn.pinn.losses import (
+    SelfAdaptiveLoss,
     bc_loss,
     data_loss,
     pressure_anchor_loss,
@@ -130,7 +131,7 @@ class ExactStokesNet(nn.Module):
       ∂u/∂x + ∂v/∂y + ∂w/∂z = 0 + 0 + 0 = 0  ✓
     """
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, sdf_vals=None) -> Tensor:
         u = x[:, 1] ** 2            # y²
         v = torch.zeros_like(u)
         w = torch.zeros_like(u)
@@ -290,3 +291,132 @@ class TestTotalLoss:
         assert not torch.isnan(loss)
         for key, val in bd.items():
             assert math.isfinite(val), f"{key} is not finite: {val}"
+
+
+# ---------------------------------------------------------------------------
+# Fix D — SelfAdaptiveLoss
+# ---------------------------------------------------------------------------
+
+
+class TestSelfAdaptiveLoss:
+    def test_initial_lambdas_match_init_values(self) -> None:
+        init = {"data": 1.0, "phys": 2.0, "bc": 5.0, "anchor": 3.0}
+        sa = SelfAdaptiveLoss(init)
+        for k, v in init.items():
+            assert sa.lambdas[k] == pytest.approx(v, rel=1e-4)
+
+    def test_forward_returns_scalar(self) -> None:
+        sa = SelfAdaptiveLoss({"a": 1.0, "b": 2.0})
+        out = sa({"a": torch.tensor(0.5), "b": torch.tensor(0.3)})
+        assert out.shape == ()
+
+    def test_forward_weighted_sum_value(self) -> None:
+        sa = SelfAdaptiveLoss({"a": 2.0, "b": 3.0})
+        out = sa({"a": torch.tensor(1.0), "b": torch.tensor(1.0)})
+        assert float(out.detach()) == pytest.approx(5.0, rel=1e-4)
+
+    def test_lambdas_property_has_correct_keys(self) -> None:
+        init = {"data": 1.0, "phys": 2.0, "bc": 5.0, "anchor": 3.0}
+        assert set(SelfAdaptiveLoss(init).lambdas.keys()) == set(init.keys())
+
+    def test_gradients_on_log_lambdas(self) -> None:
+        sa = SelfAdaptiveLoss({"data": 1.0, "phys": 1.0})
+        out = sa({"data": torch.tensor(2.0), "phys": torch.tensor(3.0)})
+        out.backward()
+        for name, param in sa.log_lambdas.items():
+            assert param.grad is not None, f"No grad on log_lambda[{name}]"
+
+    def test_gradient_reversal_increases_weight(self) -> None:
+        """Reversing the gradient and taking an SGD step must increase λ when loss is large."""
+        sa = SelfAdaptiveLoss({"a": 1.0})
+        opt = torch.optim.SGD(sa.parameters(), lr=0.1)
+        opt.zero_grad()
+        out = sa({"a": torch.tensor(10.0)})   # large residual → weight should grow
+        out.backward()
+        for param in sa.parameters():
+            if param.grad is not None:
+                param.grad.neg_()            # gradient reversal as in trainer
+        opt.step()
+        assert sa.lambdas["a"] > 1.0
+
+    def test_zero_initial_lambda_handled(self) -> None:
+        """lambda=0 is clamped to 1e-8 before log; must not raise."""
+        sa = SelfAdaptiveLoss({"bc": 0.0})
+        out = sa({"bc": torch.tensor(1.0)})
+        assert out.shape == ()
+        assert not torch.isnan(out)
+
+
+# ---------------------------------------------------------------------------
+# Fix B — stokes_residual_loss with skip_div_loss
+# ---------------------------------------------------------------------------
+
+
+class TestStokesResidualSkipDiv:
+    def test_skip_div_returns_scalar(self, small_net: PINNNetwork) -> None:
+        loss = stokes_residual_loss(small_net, torch.rand(10, 3), skip_div_loss=True)
+        assert loss.shape == ()
+
+    def test_full_loss_ge_skip_loss(self, small_net: PINNNetwork) -> None:
+        """Full loss (momentum + div) ≥ momentum-only loss (non-negative div term)."""
+        x = torch.rand(10, 3)
+        loss_full = float(stokes_residual_loss(small_net, x, skip_div_loss=False).detach())
+        loss_skip = float(stokes_residual_loss(small_net, x, skip_div_loss=True).detach())
+        assert loss_full >= loss_skip - 1e-7
+
+    def test_skip_div_gradients_flow(self, small_net: PINNNetwork) -> None:
+        loss = stokes_residual_loss(small_net, torch.rand(8, 3), skip_div_loss=True)
+        loss.backward()
+        grads = [p.grad for p in small_net.parameters() if p.grad is not None]
+        assert len(grads) > 0
+
+    def test_skip_div_no_nan(self, small_net: PINNNetwork) -> None:
+        loss = stokes_residual_loss(small_net, torch.rand(12, 3), skip_div_loss=True)
+        assert not torch.isnan(loss)
+
+
+# ---------------------------------------------------------------------------
+# Fix A — loss functions accept sdf_vals
+# ---------------------------------------------------------------------------
+
+
+class TestLossesWithSDFVals:
+    def test_data_loss_accepts_sdf(self, small_net: PINNNetwork) -> None:
+        x = torch.rand(10, 3)
+        u_obs = torch.rand(10, 3)
+        sdf = torch.rand(10)
+        loss = data_loss(small_net, x, u_obs, sdf_vals=sdf)
+        assert loss.shape == ()
+        assert not torch.isnan(loss)
+
+    def test_stokes_loss_accepts_sdf(self, small_net: PINNNetwork) -> None:
+        x = torch.rand(10, 3)
+        sdf = torch.rand(10)
+        loss = stokes_residual_loss(small_net, x, sdf_vals=sdf)
+        assert loss.shape == ()
+        assert not torch.isnan(loss)
+
+    def test_total_loss_accepts_sdf_kwargs(
+        self, small_net: PINNNetwork, rng_pts: tuple
+    ) -> None:
+        x_data, x_colloc, x_wall, x_anchor = rng_pts
+        u_obs = torch.rand(20, 3)
+        sdf_data = torch.rand(20)
+        sdf_colloc = torch.rand(30)
+        loss, bd = total_loss(
+            small_net, x_data, u_obs, x_colloc, x_wall, x_anchor,
+            sdf_data=sdf_data, sdf_colloc=sdf_colloc,
+        )
+        assert loss.shape == ()
+        assert not torch.isnan(loss)
+
+    def test_total_loss_skip_div_accepted(
+        self, small_net: PINNNetwork, rng_pts: tuple
+    ) -> None:
+        x_data, x_colloc, x_wall, x_anchor = rng_pts
+        u_obs = torch.rand(20, 3)
+        loss, _ = total_loss(
+            small_net, x_data, u_obs, x_colloc, x_wall, x_anchor,
+            skip_div_loss=True,
+        )
+        assert not torch.isnan(loss)

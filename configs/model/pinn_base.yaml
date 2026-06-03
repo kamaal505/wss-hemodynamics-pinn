@@ -1,6 +1,5 @@
 # @package _global_
 # PINN base configuration — plain MLP, tanh activations, no RFF.
-# All training defaults from CLAUDE.md §3.6 and doc 03.
 # Override individual keys on the command line:
 #   python scripts/04_train_pinn.py model=pinn_base training.n_adam=20000
 
@@ -11,6 +10,10 @@ model:
   rff_features: 128    # ignored when use_rff=false
   rff_sigma: 1.0       # ignored when use_rff=false
   activation: tanh     # tanh | swish | gelu
+  # Fix A — hard SDF no-slip (exact boundary condition via SDF multiplication)
+  use_hard_sdf: false
+  # Fix B — vector potential parameterisation (div-free by identity)
+  use_vec_potential: false
 
 training:
   n_colloc: 10000      # collocation points per epoch
@@ -24,5 +27,8 @@ training:
   lambda_bc: 10.0
   lambda_anchor: 1.0
   checkpoint_every: 1000
-  device: "cpu"        # override to "cuda" when GPU available
-  wall_bias_frac: 0.0  # fraction of collocation pts drawn from near-wall pool
+  device: "cpu"        # override to "cuda" or "mps" when GPU available
+  wall_bias_frac: 0.4  # Fix E: 40% of collocation pts from near-wall pool
+  # Fix D — self-adaptive loss weights (gradient reversal on λ params)
+  use_adaptive_weights: false
+  sa_weight_lr: 1.0e-3

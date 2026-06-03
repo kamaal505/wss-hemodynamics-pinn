@@ -1,23 +1,36 @@
 # @package bhpo
 # BHPO search and retrain configuration.
+# Tuned for M3 Pro (16 GPU cores, MPS backend).
 
 # ── Search settings (04b_bhpo_search.py) ────────────────────────────────────
-n_calls: 50           # total objective evaluations (initial random + GP-guided)
-n_initial_points: 10  # random evaluations before GP starts fitting
+n_calls: 60            # more trials (MPS makes each trial ~5-10× faster)
+n_initial_points: 12   # random warm-up before TPE takes over
 
 # Per-trial training budget (short; winner is retrained at full budget in 04c)
-n_adam_trial: 20000
-n_lbfgs_trial: 500
+# Reduced from 20 000 → 10 000 Adam steps; MPS makes each step much faster
+# and TPE explores more configurations for the same wall-clock time.
+n_adam_trial: 10000
+n_lbfgs_trial: 200
 
 # Fraction of wall faces held out for WSS NRMSE evaluation
 val_frac: 0.2
 
-device: "cpu"   # override to "cuda" if GPU available
+# "auto" detects MPS → CUDA → CPU.  Override to "cpu" for WSL/Linux runs.
+device: "auto"
+
+# BHPO backend: "optuna" (default, TPE, resumable) or "skopt" (legacy GP)
+backend: "optuna"
+
+# Architecture flags fixed for this BHPO run.
+# Change these to search over a different architecture family.
+use_hard_sdf: false
+use_vec_potential: false
+use_adaptive_weights: false
 
 # ── Retrain settings (04c_train_pinn_with_bhpo.py) ──────────────────────────
-# Always read winning HPs from the caseC BHPO run.
 source_case_id: caseC
 
-# Full retrain budget applied in 04c.
+# Full retrain budget (same as before; MPS will finish in a fraction of the
+# time that CPU would require).
 n_adam_full: 50000
 n_lbfgs_full: 5000

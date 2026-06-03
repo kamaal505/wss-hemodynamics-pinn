@@ -1,20 +1,30 @@
 """WSS inference from a trained PINNNetwork via autograd.
 
-The WSS computation follows CLAUDE.md §3.5:
+Standard path (use_hard_sdf=False):
+    Differentiates the network output û w.r.t. x̂ at wall points.  The
+    velocity Jacobian is formed, the rate-of-strain tensor assembled, and the
+    tangential traction extracted.
 
-    D_θ(x_w) = ½(∇u_θ + (∇u_θ)ᵀ)|_{x_w}
-    τ_w = 2μ [D_θ · n̂]_tangential
+Hard-SDF path (use_hard_sdf=True):
+    At wall points SDF = 0, so differentiating the SDF-scaled output through
+    the computation graph gives zero.  Instead we use the analytical result
+    derived from the product rule:
 
-where the tangential projection removes the normal component:
-    [D · n̂]_tangential = D · n̂ - (n̂ · D · n̂) n̂
+        u(x) = d(x) · u_net(x),   d(x_wall) = 0,  ∇d|_wall = −n̂_out
 
-All computations use autograd — no finite differences.
+    At wall:  ∂u_a/∂x_b = (∂d/∂x_b) · u_net_a = −n_b · u_net_a(x_wall)
+    Strain:   D_ab = −½(n_b u_net_a + n_a u_net_b)
+    Traction: (D·n̂)_a = −½(u_net_a + n_a (u_net·n̂))
+    Normal:   n̂·D·n̂   = −(u_net·n̂)
+    Tangential traction = −½ u_net_tangential
 
-Inputs and outputs
-------------------
-- Network operates in non-dimensional coordinates (x̂, û, p̂).
-- Wall normals are dimensionless unit vectors.
-- WSS is returned in Pa (SI) after dimensional reconstruction.
+    WSS = 2μ(U/L) · [D·n̂]_tang = −μ(U/L) · u_net_tangential
+
+    The sign is a convention (direction of traction on the fluid); the
+    magnitude |WSS| = μ(U/L) · |u_net_tang| is what we report.
+
+    This requires only a forward pass (net.forward_raw) at wall points —
+    no autograd through the wall.
 """
 
 from __future__ import annotations
@@ -30,7 +40,7 @@ def compute_velocity_jacobian(
     net: nn.Module,
     x_wall: Tensor,
 ) -> Tensor:
-    """Compute ∇û at wall points via autograd.
+    """Compute ∇û at wall points via autograd (standard path only).
 
     Parameters
     ----------
@@ -45,8 +55,8 @@ def compute_velocity_jacobian(
         (W, 3, 3) Jacobian J where J[i, a, b] = ∂û_a/∂x̂_b at point i.
     """
     x = x_wall.detach().requires_grad_(True)
-    out = net(x)           # (W, 4)
-    u_vec = out[:, :3]     # (W, 3)
+    out = net(x)           # (W, 4) — standard forward (no SDF at wall = 0)
+    u_vec = out[:, :3]
 
     W = x.shape[0]
     J = torch.zeros(W, 3, 3, device=x.device, dtype=x.dtype)
@@ -58,9 +68,9 @@ def compute_velocity_jacobian(
             create_graph=False,
             retain_graph=True,
         )
-        J[:, a, :] = grad_a   # ∂û_a/∂x̂_b for b=0,1,2
+        J[:, a, :] = grad_a
 
-    return J   # (W, 3, 3)
+    return J
 
 
 def compute_wss(
@@ -68,7 +78,10 @@ def compute_wss(
     x_wall_nondim: Tensor,
     wall_normals: Tensor,
 ) -> tuple[Tensor, Tensor]:
-    """Compute wall shear stress (WSS) from a trained PINN.
+    """Compute WSS using the standard autograd path.
+
+    Use this when use_hard_sdf=False.  When use_hard_sdf=True call
+    compute_wss_hard_sdf instead.
 
     Parameters
     ----------
@@ -88,30 +101,86 @@ def compute_wss(
     """
     J = compute_velocity_jacobian(net, x_wall_nondim)  # (W, 3, 3) non-dim
 
-    # Rate-of-strain tensor D̂ = ½(J + Jᵀ), shape (W, 3, 3)
     D_hat = 0.5 * (J + J.transpose(1, 2))
+    n = wall_normals.to(x_wall_nondim.device)
 
-    n = wall_normals.to(x_wall_nondim.device)    # (W, 3)
-
-    # Traction vector: D̂ · n̂, shape (W, 3)
     Dn = torch.einsum("wab,wb->wa", D_hat, n)
+    normal_mag = (Dn * n).sum(dim=1, keepdim=True)
+    tau_hat_tangential = Dn - normal_mag * n
 
-    # Normal component: (n̂ · D̂ · n̂) n̂, shape (W, 3)
-    normal_mag = (Dn * n).sum(dim=1, keepdim=True)   # (W, 1)
-    tau_hat_tangential = Dn - normal_mag * n          # (W, 3)
-
-    # Dimensional WSS: τ = 2μ(U/L) · τ̂_tangential
     dim_scale = 2.0 * MU * U_SCALE / L_SCALE
     tau_pa = dim_scale * tau_hat_tangential
-
     tau_mag_pa = tau_pa.norm(dim=1)
 
     return tau_pa, tau_mag_pa
 
 
+def compute_wss_hard_sdf(
+    net: nn.Module,
+    x_wall_nondim: Tensor,
+    wall_normals: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Compute WSS using the analytical hard-SDF formula (Fix A).
+
+    Requires net.use_hard_sdf=True.  Does NOT call autograd on wall points.
+    Instead evaluates the raw network output (before SDF scaling) and applies
+    the analytical result:
+
+        |τ_w| = μ (U/L) |û_net − (û_net · n̂) n̂|
+
+    Parameters
+    ----------
+    net:
+        Trained PINNNetwork with use_hard_sdf=True.
+    x_wall_nondim:
+        (W, 3) non-dimensional wall-centroid coordinates.
+    wall_normals:
+        (W, 3) outward unit normals at the wall centroids.
+
+    Returns
+    -------
+    tau_pa : Tensor
+        (W, 3) WSS vectors in Pa.
+    tau_mag_pa : Tensor
+        (W,) WSS magnitudes in Pa.
+    """
+    with torch.no_grad():
+        raw = net.forward_raw(x_wall_nondim)   # (W, 4) before SDF
+    u_net = raw[:, :3]                          # (W, 3) non-dim
+
+    n = wall_normals.to(x_wall_nondim.device)   # (W, 3)
+    u_net_n = (u_net * n).sum(dim=1, keepdim=True)   # normal component (W, 1)
+    u_net_tang = u_net - u_net_n * n                  # tangential component (W, 3)
+
+    # From derivation: τ_w = −μ(U/L) · û_net_tang  (sign = convention)
+    # Magnitude: |τ_w| = μ(U/L) · |û_net_tang|
+    dim_scale = MU * U_SCALE / L_SCALE   # note: no factor 2 (already folded in)
+    tau_pa = dim_scale * u_net_tang
+    tau_mag_pa = tau_pa.norm(dim=1)
+
+    return tau_pa, tau_mag_pa
+
+
+def compute_wss_auto(
+    net: nn.Module,
+    x_wall_nondim: Tensor,
+    wall_normals: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Dispatch to the appropriate WSS computation based on network flags.
+
+    Uses the hard-SDF analytical formula when net.use_hard_sdf=True;
+    otherwise uses the standard autograd Jacobian path.
+    """
+    use_hard = getattr(net, "use_hard_sdf", False)
+    if use_hard:
+        return compute_wss_hard_sdf(net, x_wall_nondim, wall_normals)
+    return compute_wss(net, x_wall_nondim, wall_normals)
+
+
 def predict_velocity_field(
     net: nn.Module,
     x_nondim: Tensor,
+    sdf_vals: "Optional[Tensor]" = None,
 ) -> tuple[Tensor, Tensor]:
     """Return dimensional velocity and pressure at arbitrary points.
 
@@ -121,6 +190,9 @@ def predict_velocity_field(
         Trained PINNNetwork.
     x_nondim:
         (N, 3) non-dimensional query coordinates.
+    sdf_vals:
+        (N,) non-dimensional SDF values.  Pass when use_hard_sdf=True so
+        the velocity includes the SDF scaling.
 
     Returns
     -------
@@ -129,8 +201,9 @@ def predict_velocity_field(
     p_pa : Tensor
         (N,) pressure in Pa.
     """
+    from typing import Optional  # noqa: PLC0415 — local import avoids cycle
     with torch.no_grad():
-        out = net(x_nondim)   # (N, 4)
+        out = net(x_nondim, sdf_vals=sdf_vals)
     u_ms = out[:, :3] * U_SCALE
     p_pa = out[:, 3] * (MU * U_SCALE / L_SCALE)
     return u_ms, p_pa
