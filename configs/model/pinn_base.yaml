@@ -11,9 +11,9 @@ model:
   rff_sigma: 1.0       # ignored when use_rff=false
   activation: tanh     # tanh | swish | gelu
   # Fix A — hard SDF no-slip (exact boundary condition via SDF multiplication)
-  use_hard_sdf: false
+  use_hard_sdf: true
   # Fix B — vector potential parameterisation (div-free by identity)
-  use_vec_potential: false
+  use_vec_potential: true
 
 training:
   n_colloc: 10000      # collocation points per epoch

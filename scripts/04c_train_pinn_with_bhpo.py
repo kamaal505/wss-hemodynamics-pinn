@@ -177,10 +177,17 @@ def main(cfg: DictConfig) -> None:
     out_dir = _root / cfg.output.pinn_base_dir / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save provenance: which HP dict was used for this retrain.
+    # Save provenance: which HP dict and architecture flags this retrain used.
+    # 05_evaluate.py reads these back to reconstruct an identical PINNNetwork.
     with open(out_dir / "bhpo_params.json", "w") as f:
         json.dump(
-            {"source_case_id": bhpo_source, "best_hp": best_hp},
+            {
+                "source_case_id": bhpo_source,
+                "best_hp": best_hp,
+                "use_hard_sdf": use_hard_sdf,
+                "use_vec_potential": use_vec_potential,
+                "use_adaptive_weights": use_adaptive_weights,
+            },
             f, indent=2,
         )
 

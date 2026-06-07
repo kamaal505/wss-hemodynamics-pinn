@@ -1,0 +1,372 @@
+{
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\02_run_cfd.py": {
+    "mtime": 1779224271.2715442,
+    "ast_hash": "abe6ed2abb3d47b065caa89ef2433367",
+    "semantic_hash": "abe6ed2abb3d47b065caa89ef2433367"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\03_generate_synthetic_mri.py": {
+    "mtime": 1778703659.4416087,
+    "ast_hash": "cbbb3ae1f743afd47a2d3958d89716ec",
+    "semantic_hash": "cbbb3ae1f743afd47a2d3958d89716ec"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\04_train_pinn.py": {
+    "mtime": 1779656463.3741367,
+    "ast_hash": "440f70feae88d7a8f0bd374b367b053c",
+    "semantic_hash": "440f70feae88d7a8f0bd374b367b053c"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\04b_bhpo_search.py": {
+    "mtime": 1780481202.7893262,
+    "ast_hash": "bfaeb78d1bf84e2d7e7ca40932cba395",
+    "semantic_hash": "bfaeb78d1bf84e2d7e7ca40932cba395"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\04c_train_pinn_with_bhpo.py": {
+    "mtime": 1780481235.715111,
+    "ast_hash": "0f1a46a2cc07fa0fbc28fc7baea86218",
+    "semantic_hash": "0f1a46a2cc07fa0fbc28fc7baea86218"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\05_evaluate.py": {
+    "mtime": 1779657472.8907487,
+    "ast_hash": "10526f206dbc193963f8631e21c21d99",
+    "semantic_hash": "10526f206dbc193963f8631e21c21d99"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\06_run_sweep.py": {
+    "mtime": 1779657532.0899472,
+    "ast_hash": "a26bca2464ccd9c1bc0f8afbfdf6f761",
+    "semantic_hash": "a26bca2464ccd9c1bc0f8afbfdf6f761"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\07_make_all_figures.py": {
+    "mtime": 1779657604.4249208,
+    "ast_hash": "b02b2e025646aadfec0512e5f80f9c14",
+    "semantic_hash": "b02b2e025646aadfec0512e5f80f9c14"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\fetch_and_inspect.sh": {
+    "mtime": 1778625602.8591592,
+    "ast_hash": "86fe53b46efb37403c3f3bb252d334b9",
+    "semantic_hash": "86fe53b46efb37403c3f3bb252d334b9"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\__init__.py": {
+    "mtime": 1778684783.5392475,
+    "ast_hash": "dac503285868b7ea6d911804f5ef3d5f",
+    "semantic_hash": "dac503285868b7ea6d911804f5ef3d5f"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\bhpo\\__init__.py": {
+    "mtime": 1779656272.1419556,
+    "ast_hash": "4e2986345fad88fd34ef9c686a6007f6",
+    "semantic_hash": "4e2986345fad88fd34ef9c686a6007f6"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\bhpo\\objective.py": {
+    "mtime": 1780485138.2576873,
+    "ast_hash": "edc4d3c91537c00efdf2f9f1964c6a64",
+    "semantic_hash": "edc4d3c91537c00efdf2f9f1964c6a64"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\bhpo\\search.py": {
+    "mtime": 1780481066.1722486,
+    "ast_hash": "3b7db9745522c709bf53178b78cf5714",
+    "semantic_hash": "3b7db9745522c709bf53178b78cf5714"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\bhpo\\space.py": {
+    "mtime": 1780481019.3824618,
+    "ast_hash": "9b0d6c54470b6005a34f35e4dca3ebe6",
+    "semantic_hash": "9b0d6c54470b6005a34f35e4dca3ebe6"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\cfd\\__init__.py": {
+    "mtime": 1778691583.180292,
+    "ast_hash": "21cc9341252d5577d63c10d6ab905a72",
+    "semantic_hash": "21cc9341252d5577d63c10d6ab905a72"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\cfd\\postprocess.py": {
+    "mtime": 1778704735.1774654,
+    "ast_hash": "4c3ad2b473c6c667e3ea4d7ab38bf48d",
+    "semantic_hash": "4c3ad2b473c6c667e3ea4d7ab38bf48d"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\cfd\\stokes_solver.py": {
+    "mtime": 1779224271.2755299,
+    "ast_hash": "b45707cc0ebbb6f2bd6dc9b61bdb5d8e",
+    "semantic_hash": "b45707cc0ebbb6f2bd6dc9b61bdb5d8e"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\eval\\__init__.py": {
+    "mtime": 1779657264.5668185,
+    "ast_hash": "96eea187abc3d7347edebf85e61b8303",
+    "semantic_hash": "96eea187abc3d7347edebf85e61b8303"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\eval\\bland_altman.py": {
+    "mtime": 1779657295.8098426,
+    "ast_hash": "cd25942aabb137c287468f9da6e2992c",
+    "semantic_hash": "cd25942aabb137c287468f9da6e2992c"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\eval\\conservation.py": {
+    "mtime": 1779657315.468629,
+    "ast_hash": "ba9f07603a2082403b8bcac87c034270",
+    "semantic_hash": "ba9f07603a2082403b8bcac87c034270"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\eval\\field_metrics.py": {
+    "mtime": 1779657274.0433276,
+    "ast_hash": "5ef15cfc8576ac0a085c4a1acc9a0fb0",
+    "semantic_hash": "5ef15cfc8576ac0a085c4a1acc9a0fb0"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\eval\\wss_metrics.py": {
+    "mtime": 1779657283.0997877,
+    "ast_hash": "bae6f225e42ae2ef3f65c782af1972e4",
+    "semantic_hash": "bae6f225e42ae2ef3f65c782af1972e4"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\geometry\\__init__.py": {
+    "mtime": 1778684796.900926,
+    "ast_hash": "447d8873688ff5165a25510daf90949b",
+    "semantic_hash": "447d8873688ff5165a25510daf90949b"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\geometry\\anxplore_loader.py": {
+    "mtime": 1778684908.1225464,
+    "ast_hash": "8ba176d44cfc6ffd8c0794b1108d4ee3",
+    "semantic_hash": "8ba176d44cfc6ffd8c0794b1108d4ee3"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\geometry\\sdf.py": {
+    "mtime": 1780480596.377501,
+    "ast_hash": "72fc8698032449263dea9cf9a40d1a50",
+    "semantic_hash": "72fc8698032449263dea9cf9a40d1a50"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\mri\\__init__.py": {
+    "mtime": 1778703400.20253,
+    "ast_hash": "e292d3624dc868a305556a74ae0aa7ef",
+    "semantic_hash": "e292d3624dc868a305556a74ae0aa7ef"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\mri\\noise.py": {
+    "mtime": 1778703447.1051998,
+    "ast_hash": "88206bd9c5b0c067fccc9caa74841c1f",
+    "semantic_hash": "88206bd9c5b0c067fccc9caa74841c1f"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\mri\\operator.py": {
+    "mtime": 1778703487.8814871,
+    "ast_hash": "e6bab1fd4e95803ebaae13f9ad9e0c30",
+    "semantic_hash": "e6bab1fd4e95803ebaae13f9ad9e0c30"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\mri\\voxelise.py": {
+    "mtime": 1778703429.259229,
+    "ast_hash": "5d5ea8f46d93bcd17c11a83bc32b822a",
+    "semantic_hash": "5d5ea8f46d93bcd17c11a83bc32b822a"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\pinn\\__init__.py": {
+    "mtime": 1778706975.5326643,
+    "ast_hash": "d835d17080958bf0cb362d15750d4027",
+    "semantic_hash": "d835d17080958bf0cb362d15750d4027"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\pinn\\inference.py": {
+    "mtime": 1780480902.0870972,
+    "ast_hash": "04443fc0ab691be41f4acb2223678ffc",
+    "semantic_hash": "04443fc0ab691be41f4acb2223678ffc"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\pinn\\losses.py": {
+    "mtime": 1780480719.7418997,
+    "ast_hash": "6f957c407dee3460f4656b47000672fc",
+    "semantic_hash": "6f957c407dee3460f4656b47000672fc"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\pinn\\networks.py": {
+    "mtime": 1780480659.8749573,
+    "ast_hash": "cedadae11815fbe0a4a9c2c73b6393b1",
+    "semantic_hash": "cedadae11815fbe0a4a9c2c73b6393b1"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\pinn\\sampling.py": {
+    "mtime": 1779656043.0222037,
+    "ast_hash": "508ef151225d69039cfe92d4a13bb081",
+    "semantic_hash": "508ef151225d69039cfe92d4a13bb081"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\pinn\\trainer.py": {
+    "mtime": 1780480833.5314279,
+    "ast_hash": "d437ecf51fc20f644b7a4e7cfa2eb2a3",
+    "semantic_hash": "d437ecf51fc20f644b7a4e7cfa2eb2a3"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\utils\\__init__.py": {
+    "mtime": 1778684804.3440094,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\utils\\seeds.py": {
+    "mtime": 1779656105.1582198,
+    "ast_hash": "79adbdf940f20f65e7322c1e5e54b0ed",
+    "semantic_hash": "79adbdf940f20f65e7322c1e5e54b0ed"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\viz\\__init__.py": {
+    "mtime": 1779657326.1146326,
+    "ast_hash": "956a8cd7bd2882a819114af4d19435c3",
+    "semantic_hash": "956a8cd7bd2882a819114af4d19435c3"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\viz\\plots_2d.py": {
+    "mtime": 1779657399.3614242,
+    "ast_hash": "3fee46dd4be0224baa1a0840f012cd94",
+    "semantic_hash": "3fee46dd4be0224baa1a0840f012cd94"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\viz\\render_3d.py": {
+    "mtime": 1779657359.0464144,
+    "ast_hash": "89fbaa65ac74b41114f88ca7848e4423",
+    "semantic_hash": "89fbaa65ac74b41114f88ca7848e4423"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\viz\\style.py": {
+    "mtime": 1779657336.9426334,
+    "ast_hash": "2796bbb44c046b485c9ea36631fc70b7",
+    "semantic_hash": "2796bbb44c046b485c9ea36631fc70b7"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_anxplore_loader.py": {
+    "mtime": 1778685109.1984777,
+    "ast_hash": "c2e7fc56c0eab2e6f19dc0191f89aedd",
+    "semantic_hash": "c2e7fc56c0eab2e6f19dc0191f89aedd"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_bhpo.py": {
+    "mtime": 1780484232.9233239,
+    "ast_hash": "921b0e5bd88202f06d803a540ec7d28d",
+    "semantic_hash": "921b0e5bd88202f06d803a540ec7d28d"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_inference.py": {
+    "mtime": 1780484616.293228,
+    "ast_hash": "2c5c587815d25a71f41a4063826822d8",
+    "semantic_hash": "2c5c587815d25a71f41a4063826822d8"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_losses.py": {
+    "mtime": 1780484495.390873,
+    "ast_hash": "0802d609fc1bce31bab96b060f105a1f",
+    "semantic_hash": "0802d609fc1bce31bab96b060f105a1f"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_mri_operator.py": {
+    "mtime": 1778703873.801068,
+    "ast_hash": "aed46acfbb01d354d2ef76a4d30e3cb5",
+    "semantic_hash": "aed46acfbb01d354d2ef76a4d30e3cb5"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_networks.py": {
+    "mtime": 1780484094.1538653,
+    "ast_hash": "76cde43742c63406eb28ca568a10985e",
+    "semantic_hash": "76cde43742c63406eb28ca568a10985e"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_sampling.py": {
+    "mtime": 1780484126.5204093,
+    "ast_hash": "baa0263d17b6af689aa27c3597a400ec",
+    "semantic_hash": "baa0263d17b6af689aa27c3597a400ec"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_sdf.py": {
+    "mtime": 1780484051.5392225,
+    "ast_hash": "015274d845a7cbbb172be8b063d1ca93",
+    "semantic_hash": "015274d845a7cbbb172be8b063d1ca93"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_stokes_solver.py": {
+    "mtime": 1779223871.2563584,
+    "ast_hash": "d307dd5d7a0c96549da3c78ea550f814",
+    "semantic_hash": "d307dd5d7a0c96549da3c78ea550f814"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\test_trainer.py": {
+    "mtime": 1780484177.0547202,
+    "ast_hash": "b08484770053f45631a716956e7538c4",
+    "semantic_hash": "b08484770053f45631a716956e7538c4"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\CLAUDE.md": {
+    "mtime": 1780481369.295291,
+    "ast_hash": "34412f4606bccadaf19d6185aefd4093",
+    "semantic_hash": "34412f4606bccadaf19d6185aefd4093"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\README.md": {
+    "mtime": 1778711086.8426437,
+    "ast_hash": "d4d81db02abb5468cfd0ae4bb06640cb",
+    "semantic_hash": "d4d81db02abb5468cfd0ae4bb06640cb"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\README.md": {
+    "mtime": 1778711112.245875,
+    "ast_hash": "27cb0f1389a7d3d87e47471b90a63649",
+    "semantic_hash": "27cb0f1389a7d3d87e47471b90a63649"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\bhpo\\default.yaml": {
+    "mtime": 1780481166.621328,
+    "ast_hash": "43ebc41213223981d7c2c646c6845f1d",
+    "semantic_hash": "43ebc41213223981d7c2c646c6845f1d"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\cfd\\stokes_default.yaml": {
+    "mtime": 1779224271.125537,
+    "ast_hash": "cdcd0b6c71ffe94828cf02bdf6fd8af1",
+    "semantic_hash": "cdcd0b6c71ffe94828cf02bdf6fd8af1"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\config.yaml": {
+    "mtime": 1779657411.4414256,
+    "ast_hash": "7d2457188d7fbdef2ef6d57e4c8b6f9c",
+    "semantic_hash": "7d2457188d7fbdef2ef6d57e4c8b6f9c"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\geometry\\caseA.yaml": {
+    "mtime": 1778691811.0508344,
+    "ast_hash": "de8e079b802ff89dbf76c71d5246a700",
+    "semantic_hash": "de8e079b802ff89dbf76c71d5246a700"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\geometry\\caseB.yaml": {
+    "mtime": 1778691817.5241916,
+    "ast_hash": "0a4de00f344a1d85158e2833125e05b8",
+    "semantic_hash": "0a4de00f344a1d85158e2833125e05b8"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\geometry\\caseC.yaml": {
+    "mtime": 1778691823.5785449,
+    "ast_hash": "74a9e6543710dde912078b22e8a045b2",
+    "semantic_hash": "74a9e6543710dde912078b22e8a045b2"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\geometry\\caseR.yaml": {
+    "mtime": 1778691829.7024522,
+    "ast_hash": "8dffaa8960cd5ac1197cca4aeffb99b6",
+    "semantic_hash": "8dffaa8960cd5ac1197cca4aeffb99b6"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\model\\pinn_base.yaml": {
+    "mtime": 1780480963.8540332,
+    "ast_hash": "ca3be2e38b971d3aec4c96658e962e1e",
+    "semantic_hash": "ca3be2e38b971d3aec4c96658e962e1e"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\model\\pinn_rff.yaml": {
+    "mtime": 1779656135.8262408,
+    "ast_hash": "f2b53c3cc885b788c2f012d9d085931d",
+    "semantic_hash": "f2b53c3cc885b788c2f012d9d085931d"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\mri\\voxel_0p5mm.yaml": {
+    "mtime": 1778703534.1378891,
+    "ast_hash": "f3e7db3d5b7b50ba0ef7d8c5b75f7f36",
+    "semantic_hash": "f3e7db3d5b7b50ba0ef7d8c5b75f7f36"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\mri\\voxel_1p0mm.yaml": {
+    "mtime": 1778703535.7673347,
+    "ast_hash": "10828a64e112f01168f150afb1808721",
+    "semantic_hash": "10828a64e112f01168f150afb1808721"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\mri\\voxel_1p5mm.yaml": {
+    "mtime": 1778703537.2387016,
+    "ast_hash": "d36d2db230831aa60dea04b1fa64c252",
+    "semantic_hash": "d36d2db230831aa60dea04b1fa64c252"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\mri\\voxel_2p0mm.yaml": {
+    "mtime": 1778703539.185524,
+    "ast_hash": "63838e1d4c59fb172168634f4ff239c4",
+    "semantic_hash": "63838e1d4c59fb172168634f4ff239c4"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\configs\\mri\\voxel_2p5mm.yaml": {
+    "mtime": 1778703542.2686846,
+    "ast_hash": "16f7ee0a86e619bf1e64533b17a2bff6",
+    "semantic_hash": "16f7ee0a86e619bf1e64533b17a2bff6"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\notes\\implementation_fixes.md": {
+    "mtime": 1780481312.4886281,
+    "ast_hash": "27955ef102ce0361e25ec08ff4a0940d",
+    "semantic_hash": "27955ef102ce0361e25ec08ff4a0940d"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\notes\\results\\baseline_caseC_1mm.md": {
+    "mtime": 1779658606.8968065,
+    "ast_hash": "9b7cd96bb1649b562acfad5f7514ecab",
+    "semantic_hash": "9b7cd96bb1649b562acfad5f7514ecab"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\requirements.txt": {
+    "mtime": 1778674787.223523,
+    "ast_hash": "2ad603afe2dfaba1239eeb8e909fde22",
+    "semantic_hash": "2ad603afe2dfaba1239eeb8e909fde22"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\scripts\\README.md": {
+    "mtime": 1778711148.6523626,
+    "ast_hash": "680b018c2edca237a65aaddd7cfc2a23",
+    "semantic_hash": "680b018c2edca237a65aaddd7cfc2a23"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\src\\hemodyn_pinn\\README.md": {
+    "mtime": 1778711209.7193549,
+    "ast_hash": "77c20291fc113df6637fe02e11a14839",
+    "semantic_hash": "77c20291fc113df6637fe02e11a14839"
+  },
+  "D:\\Math\\CFD\\wss-hemodynamics-pinn\\tests\\README.md": {
+    "mtime": 1778711230.718793,
+    "ast_hash": "d7d88a6c7a022304986b67d6f55a45c9",
+    "semantic_hash": "d7d88a6c7a022304986b67d6f55a45c9"
+  }
+}

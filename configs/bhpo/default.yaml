@@ -23,8 +23,8 @@ backend: "optuna"
 
 # Architecture flags fixed for this BHPO run.
 # Change these to search over a different architecture family.
-use_hard_sdf: false
-use_vec_potential: false
+use_hard_sdf: true
+use_vec_potential: true
 use_adaptive_weights: false
 
 # ── Retrain settings (04c_train_pinn_with_bhpo.py) ──────────────────────────

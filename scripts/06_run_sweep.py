@@ -99,7 +99,7 @@ def _run_evaluation(
         icc_one_way,
         flow_rate_conservation_error,
     )
-    from hemodyn_pinn.pinn.inference import compute_wss, predict_velocity_field
+    from hemodyn_pinn.pinn.inference import compute_wss_auto, predict_velocity_field
     from hemodyn_pinn.pinn.networks import PINNNetwork
     from hemodyn_pinn.pinn.sampling import to_nondim_coords
 
@@ -120,7 +120,10 @@ def _run_evaluation(
     # ── Load architecture ────────────────────────────────────────────────────
     bhpo_json = ckpt_dir / "bhpo_params.json"
     if bhpo_json.exists():
-        best_hp = json.loads(bhpo_json.read_text())["best_hp"]
+        bhpo_record = json.loads(bhpo_json.read_text())
+        best_hp = bhpo_record["best_hp"]
+        use_hard_sdf = bool(bhpo_record.get("use_hard_sdf", False))
+        use_vec_potential = bool(bhpo_record.get("use_vec_potential", False))
         net = PINNNetwork(
             n_hidden=int(best_hp["n_hidden"]),
             n_layers=int(best_hp["n_layers"]),
@@ -128,10 +131,15 @@ def _run_evaluation(
             rff_features=128,
             rff_sigma=float(best_hp.get("rff_sigma", 1.0)),
             activation=str(best_hp.get("activation", "tanh")),
+            use_hard_sdf=use_hard_sdf,
+            use_vec_potential=use_vec_potential,
         )
     else:
-        # Default pinn_base architecture (fixed-HP runs)
-        net = PINNNetwork(n_hidden=128, n_layers=4, use_rff=False, activation="tanh")
+        # Default pinn_base architecture (fixed-HP runs) — must match configs/model/pinn_base.yaml
+        net = PINNNetwork(
+            n_hidden=128, n_layers=4, use_rff=False, activation="tanh",
+            use_hard_sdf=True, use_vec_potential=True,
+        )
 
     dev = torch.device(device)
     ckpt = torch.load(str(ckpt_path), map_location="cpu")
@@ -163,16 +171,29 @@ def _run_evaluation(
         end = min(start + wss_batch_size, wall_pts_nondim.shape[0])
         x_b = torch.tensor(wall_pts_nondim[start:end], dtype=torch.float32, device=dev)
         n_b = torch.tensor(wall_normals[start:end], dtype=torch.float32, device=dev)
-        _, tau_mag = compute_wss(net, x_b, n_b)
+        _, tau_mag = compute_wss_auto(net, x_b, n_b)
         pinn_wss_parts.append(tau_mag.detach().cpu().numpy())
     import numpy as np
     pinn_wss_pa = np.concatenate(pinn_wss_parts, axis=0)
     elapsed = time.perf_counter() - t0
 
     # ── Conservation check ───────────────────────────────────────────────────
+    # Fix A: predict_velocity_field needs sdf_vals when use_hard_sdf=True,
+    # otherwise it returns the raw, SDF-unscaled velocity (wrong magnitude).
+    sdf_fn = None
+    if net.use_hard_sdf:
+        from hemodyn_pinn.geometry.sdf import WallSDF
+        from hemodyn_pinn.pinn.networks import L_SCALE
+        sdf_fn = WallSDF(wall_centroids_m)
+
     def _pred(pts):
         x = torch.tensor(pts, dtype=torch.float32, device=dev)
-        u, p = predict_velocity_field(net, x)
+        sdf_vals = None
+        if sdf_fn is not None:
+            sdf_vals = torch.tensor(
+                sdf_fn.nondim(pts, L_SCALE), dtype=torch.float32, device=dev
+            )
+        u, p = predict_velocity_field(net, x, sdf_vals=sdf_vals)
         return u.cpu().numpy(), p.cpu().numpy()
 
     u_in, _ = _pred(to_nondim_coords(sol["wall_centroids_m"][inlet_mask]))

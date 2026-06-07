@@ -65,7 +65,7 @@ def _compute_wss_batched(
         (W,) WSS magnitudes [Pa].
     """
     import torch
-    from hemodyn_pinn.pinn.inference import compute_wss
+    from hemodyn_pinn.pinn.inference import compute_wss_auto
 
     net.eval()
     wss_all = []
@@ -77,7 +77,7 @@ def _compute_wss_batched(
                            device=device)
         n_b = torch.tensor(wall_normals[start:end], dtype=torch.float32,
                            device=device)
-        _, tau_mag = compute_wss(net, x_b, n_b)
+        _, tau_mag = compute_wss_auto(net, x_b, n_b)
         wss_all.append(tau_mag.detach().cpu().numpy())
 
     return np.concatenate(wss_all, axis=0)   # (W,)
@@ -116,8 +116,12 @@ def main(cfg: DictConfig) -> None:
     # ── Determine network architecture ──────────────────────────────────────
     bhpo_json = ckpt_dir / "bhpo_params.json"
     if bhpo_json.exists():
-        best_hp = json.loads(bhpo_json.read_text())["best_hp"]
-        log.info("Architecture from BHPO: %s", best_hp)
+        bhpo_record = json.loads(bhpo_json.read_text())
+        best_hp = bhpo_record["best_hp"]
+        use_hard_sdf = bool(bhpo_record.get("use_hard_sdf", False))
+        use_vec_potential = bool(bhpo_record.get("use_vec_potential", False))
+        log.info("Architecture from BHPO: %s  use_hard_sdf=%s  use_vec_potential=%s",
+                 best_hp, use_hard_sdf, use_vec_potential)
         net = PINNNetwork(
             n_hidden=int(best_hp["n_hidden"]),
             n_layers=int(best_hp["n_layers"]),
@@ -125,10 +129,14 @@ def main(cfg: DictConfig) -> None:
             rff_features=128,
             rff_sigma=float(best_hp.get("rff_sigma", 1.0)),
             activation=str(best_hp.get("activation", "tanh")),
+            use_hard_sdf=use_hard_sdf,
+            use_vec_potential=use_vec_potential,
         )
     else:
-        log.info("Architecture from model config: n_hidden=%d n_layers=%d",
-                 cfg.model.n_hidden, cfg.model.n_layers)
+        log.info("Architecture from model config: n_hidden=%d n_layers=%d  "
+                 "use_hard_sdf=%s  use_vec_potential=%s",
+                 cfg.model.n_hidden, cfg.model.n_layers,
+                 cfg.model.use_hard_sdf, cfg.model.use_vec_potential)
         net = PINNNetwork(
             n_hidden=cfg.model.n_hidden,
             n_layers=cfg.model.n_layers,
@@ -136,6 +144,8 @@ def main(cfg: DictConfig) -> None:
             rff_features=cfg.model.rff_features,
             rff_sigma=cfg.model.rff_sigma,
             activation=cfg.model.activation,
+            use_hard_sdf=cfg.model.use_hard_sdf,
+            use_vec_potential=cfg.model.use_vec_potential,
         )
 
     # ── Load checkpoint weights ─────────────────────────────────────────────
@@ -187,9 +197,23 @@ def main(cfg: DictConfig) -> None:
     # ── Conservation check ──────────────────────────────────────────────────
     import torch as _torch
 
+    # Fix A: when use_hard_sdf=True, forward() multiplies velocity by SDF —
+    # predict_velocity_field must receive sdf_vals or it returns the raw,
+    # unscaled network output (wrong magnitude away from the wall).
+    sdf_fn = None
+    if net.use_hard_sdf:
+        from hemodyn_pinn.geometry.sdf import WallSDF
+        from hemodyn_pinn.pinn.networks import L_SCALE
+        sdf_fn = WallSDF(wall_centroids_m)
+
     def _predict_fn(pts_nondim: np.ndarray):
         x = _torch.tensor(pts_nondim, dtype=_torch.float32, device=device)
-        u_ms, p_pa = predict_velocity_field(net, x)
+        sdf_vals = None
+        if sdf_fn is not None:
+            sdf_vals = _torch.tensor(
+                sdf_fn.nondim(pts_nondim, L_SCALE), dtype=_torch.float32, device=device
+            )
+        u_ms, p_pa = predict_velocity_field(net, x, sdf_vals=sdf_vals)
         return u_ms.cpu().numpy(), p_pa.cpu().numpy()
 
     inlet_centroids_m = sol["wall_centroids_m"][inlet_mask]

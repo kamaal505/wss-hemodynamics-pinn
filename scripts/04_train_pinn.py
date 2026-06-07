@@ -118,11 +118,15 @@ def main(cfg: DictConfig) -> None:
         rff_features=cfg.model.rff_features,
         rff_sigma=cfg.model.rff_sigma,
         activation=cfg.model.activation,
+        use_hard_sdf=cfg.model.use_hard_sdf,
+        use_vec_potential=cfg.model.use_vec_potential,
     )
     n_params = sum(p.numel() for p in net.parameters())
     log.info(
-        "Network: %d parameters  use_rff=%s  activation=%s",
+        "Network: %d parameters  use_rff=%s  activation=%s  "
+        "use_hard_sdf=%s  use_vec_potential=%s",
         n_params, cfg.model.use_rff, cfg.model.activation,
+        cfg.model.use_hard_sdf, cfg.model.use_vec_potential,
     )
 
     # ── Configure training ───────────────────────────────────────────────────
@@ -140,6 +144,10 @@ def main(cfg: DictConfig) -> None:
         checkpoint_every=cfg.training.checkpoint_every,
         device=cfg.training.device,
         wall_bias_frac=float(cfg.training.wall_bias_frac),
+        use_hard_sdf=cfg.model.use_hard_sdf,
+        use_vec_potential=cfg.model.use_vec_potential,
+        use_adaptive_weights=cfg.training.use_adaptive_weights,
+        sa_weight_lr=float(cfg.training.sa_weight_lr),
     )
 
     run_id = f"{case_id}_{voxel_tag}_adam{cfg.training.n_adam}"
@@ -153,6 +161,7 @@ def main(cfg: DictConfig) -> None:
         anchor_pt_nondim=anchor_nondim,
         x_data=x_data_nondim,
         u_obs_nondim=u_obs_nondim,
+        wall_pts_m=wall_pts_m if cfg.model.use_hard_sdf else None,
         out_dir=out_dir,
     )
 
