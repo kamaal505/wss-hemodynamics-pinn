@@ -115,7 +115,12 @@ def main(cfg: DictConfig) -> None:
     backend              = str(cfg.bhpo.get("backend", "auto"))
 
     # ── Build BHPO objective ─────────────────────────────────────────────────
-    out_dir = _root / "data" / "bhpo_runs" / case_id
+    _flag_suffix = (
+        ("_hsdf" if use_hard_sdf else "")
+        + ("_vecp" if use_vec_potential else "")
+        + ("_sa" if use_adaptive_weights else "")
+    )
+    out_dir = _root / "data" / "bhpo_runs" / f"{case_id}{_flag_suffix}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     objective = BHPOObjective(

@@ -3,13 +3,11 @@
 # Tuned for M3 Pro (16 GPU cores, MPS backend).
 
 # ── Search settings (04b_bhpo_search.py) ────────────────────────────────────
-n_calls: 60            # more trials (MPS makes each trial ~5-10× faster)
-n_initial_points: 12   # random warm-up before TPE takes over
+n_calls: 50
+n_initial_points: 10   # random warm-up before TPE takes over
 
 # Per-trial training budget (short; winner is retrained at full budget in 04c)
-# Reduced from 20 000 → 10 000 Adam steps; MPS makes each step much faster
-# and TPE explores more configurations for the same wall-clock time.
-n_adam_trial: 10000
+n_adam_trial: 2000
 n_lbfgs_trial: 200
 
 # Fraction of wall faces held out for WSS NRMSE evaluation
@@ -32,5 +30,5 @@ source_case_id: caseC
 
 # Full retrain budget (same as before; MPS will finish in a fraction of the
 # time that CPU would require).
-n_adam_full: 50000
+n_adam_full: 5000
 n_lbfgs_full: 5000

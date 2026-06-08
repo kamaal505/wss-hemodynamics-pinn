@@ -65,7 +65,7 @@ def _compute_wss_batched(
         (W,) WSS magnitudes [Pa].
     """
     import torch
-    from hemodyn_pinn.pinn.inference import compute_wss
+    from hemodyn_pinn.pinn.inference import compute_wss_auto
 
     net.eval()
     wss_all = []
@@ -77,7 +77,7 @@ def _compute_wss_batched(
                            device=device)
         n_b = torch.tensor(wall_normals[start:end], dtype=torch.float32,
                            device=device)
-        _, tau_mag = compute_wss(net, x_b, n_b)
+        _, tau_mag = compute_wss_auto(net, x_b, n_b)
         wss_all.append(tau_mag.detach().cpu().numpy())
 
     return np.concatenate(wss_all, axis=0)   # (W,)
@@ -116,8 +116,10 @@ def main(cfg: DictConfig) -> None:
     # ── Determine network architecture ──────────────────────────────────────
     bhpo_json = ckpt_dir / "bhpo_params.json"
     if bhpo_json.exists():
-        best_hp = json.loads(bhpo_json.read_text())["best_hp"]
-        log.info("Architecture from BHPO: %s", best_hp)
+        _saved = json.loads(bhpo_json.read_text())
+        best_hp = _saved["best_hp"]
+        _arch = _saved.get("arch_flags", {})
+        log.info("Architecture from BHPO: %s  arch_flags=%s", best_hp, _arch)
         net = PINNNetwork(
             n_hidden=int(best_hp["n_hidden"]),
             n_layers=int(best_hp["n_layers"]),
@@ -125,6 +127,8 @@ def main(cfg: DictConfig) -> None:
             rff_features=128,
             rff_sigma=float(best_hp.get("rff_sigma", 1.0)),
             activation=str(best_hp.get("activation", "tanh")),
+            use_hard_sdf=bool(_arch.get("use_hard_sdf", False)),
+            use_vec_potential=bool(_arch.get("use_vec_potential", False)),
         )
     else:
         log.info("Architecture from model config: n_hidden=%d n_layers=%d",

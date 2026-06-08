@@ -99,7 +99,7 @@ def _run_evaluation(
         icc_one_way,
         flow_rate_conservation_error,
     )
-    from hemodyn_pinn.pinn.inference import compute_wss, predict_velocity_field
+    from hemodyn_pinn.pinn.inference import compute_wss_auto, predict_velocity_field
     from hemodyn_pinn.pinn.networks import PINNNetwork
     from hemodyn_pinn.pinn.sampling import to_nondim_coords
 
@@ -120,7 +120,9 @@ def _run_evaluation(
     # ── Load architecture ────────────────────────────────────────────────────
     bhpo_json = ckpt_dir / "bhpo_params.json"
     if bhpo_json.exists():
-        best_hp = json.loads(bhpo_json.read_text())["best_hp"]
+        _saved = json.loads(bhpo_json.read_text())
+        best_hp = _saved["best_hp"]
+        _arch = _saved.get("arch_flags", {})
         net = PINNNetwork(
             n_hidden=int(best_hp["n_hidden"]),
             n_layers=int(best_hp["n_layers"]),
@@ -128,6 +130,8 @@ def _run_evaluation(
             rff_features=128,
             rff_sigma=float(best_hp.get("rff_sigma", 1.0)),
             activation=str(best_hp.get("activation", "tanh")),
+            use_hard_sdf=bool(_arch.get("use_hard_sdf", False)),
+            use_vec_potential=bool(_arch.get("use_vec_potential", False)),
         )
     else:
         # Default pinn_base architecture (fixed-HP runs)
@@ -163,7 +167,7 @@ def _run_evaluation(
         end = min(start + wss_batch_size, wall_pts_nondim.shape[0])
         x_b = torch.tensor(wall_pts_nondim[start:end], dtype=torch.float32, device=dev)
         n_b = torch.tensor(wall_normals[start:end], dtype=torch.float32, device=dev)
-        _, tau_mag = compute_wss(net, x_b, n_b)
+        _, tau_mag = compute_wss_auto(net, x_b, n_b)
         pinn_wss_parts.append(tau_mag.detach().cpu().numpy())
     import numpy as np
     pinn_wss_pa = np.concatenate(pinn_wss_parts, axis=0)

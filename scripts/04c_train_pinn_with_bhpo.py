@@ -70,7 +70,15 @@ def main(cfg: DictConfig) -> None:
 
     # ── Load winning hyperparameters from BHPO ───────────────────────────────
     bhpo_source = str(cfg.bhpo.source_case_id)
-    bhpo_dir = _root / "data" / "bhpo_runs" / bhpo_source
+    use_hard_sdf_pre         = bool(cfg.bhpo.get("use_hard_sdf", False))
+    use_vec_potential_pre    = bool(cfg.bhpo.get("use_vec_potential", False))
+    use_adaptive_weights_pre = bool(cfg.bhpo.get("use_adaptive_weights", False))
+    _flag_suffix = (
+        ("_hsdf" if use_hard_sdf_pre else "")
+        + ("_vecp" if use_vec_potential_pre else "")
+        + ("_sa" if use_adaptive_weights_pre else "")
+    )
+    bhpo_dir = _root / "data" / "bhpo_runs" / f"{bhpo_source}{_flag_suffix}"
     best_hp = load_best_params(bhpo_dir)
     log.info("Loaded BHPO HPs from %s:\n  %s", bhpo_dir,
              "  ".join(f"{k}={v}" for k, v in best_hp.items()))
@@ -173,14 +181,22 @@ def main(cfg: DictConfig) -> None:
         use_adaptive_weights=use_adaptive_weights,
     )
 
-    run_id = f"{case_id}_{voxel_tag}_bhpo"
+    run_id = f"{case_id}_{voxel_tag}_bhpo{_flag_suffix}"
     out_dir = _root / cfg.output.pinn_base_dir / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Save provenance: which HP dict was used for this retrain.
     with open(out_dir / "bhpo_params.json", "w") as f:
         json.dump(
-            {"source_case_id": bhpo_source, "best_hp": best_hp},
+            {
+                "source_case_id": bhpo_source,
+                "best_hp": best_hp,
+                "arch_flags": {
+                    "use_hard_sdf": use_hard_sdf,
+                    "use_vec_potential": use_vec_potential,
+                    "use_adaptive_weights": use_adaptive_weights,
+                },
+            },
             f, indent=2,
         )
 
