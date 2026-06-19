@@ -179,7 +179,9 @@ def main(cfg: DictConfig) -> None:
         n_lbfgs=int(cfg.bhpo.n_lbfgs_full),
         lr_adam=best_hp["lr_adam"],
         lr_lbfgs=1.0,
-        lambda_data=best_hp.get("lambda_data", 1.0),
+        # Fall back to the config default (not 1.0) so a best_params.json that
+        # predates the lambda_data search dimension still avoids collapse.
+        lambda_data=best_hp.get("lambda_data", float(cfg.training.get("lambda_data", 10.0))),
         lambda_phys=best_hp["lambda_phys"],
         lambda_bc=best_hp["lambda_bc"],
         lambda_anchor=1.0,

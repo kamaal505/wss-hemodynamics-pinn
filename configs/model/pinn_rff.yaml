@@ -11,6 +11,10 @@ model:
   rff_features: 128    # D: number of RFF frequency samples; output dim = 2D
   rff_sigma: 2.0       # bandwidth sigma; tune in {1, 2, 5, 10}
   activation: tanh     # tanh | swish | gelu
+  # Mirror pinn_base so scripts/04 (which reads cfg.model.use_hard_sdf
+  # unconditionally) does not crash when model=pinn_rff.
+  use_hard_sdf: true
+  use_vec_potential: true
 
 training:
   n_colloc: 10000
