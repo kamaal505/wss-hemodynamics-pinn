@@ -143,6 +143,72 @@ def make_pressure_anchor(outlet_pts_nondim: np.ndarray) -> np.ndarray:
     return outlet_pts_nondim[[idx]]
 
 
+def select_inlet_targets(
+    source: str,
+    inlet_centroids_m: np.ndarray,
+    voxel_centers_m: np.ndarray,
+    voxel_velocity_ms: np.ndarray,
+    node_points_m: "np.ndarray | None" = None,
+    node_velocity_ms: "np.ndarray | None" = None,
+    band_m: float = 2.0e-3,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build inlet-plane target points and velocities for the inflow constraint.
+
+    The inflow term pins the flow magnitude, which is otherwise unpinned for
+    linear homogeneous Stokes flow (see ``losses.inlet_loss``).
+
+    Parameters
+    ----------
+    source:
+        ``"mri"`` (honest, default): use the synthetic-MRI voxels whose
+        centres fall within ``band_m`` of the inlet plane — in real 4D-flow
+        MRI the inlet velocity is simply measured, so this is not
+        ground-truth leakage.
+        ``"cfd"`` (diagnostic upper bound): use the CFD nodal velocity at the
+        mesh node nearest each inlet face centroid.  Leaks the ground-truth
+        inlet profile — for diagnostics only.
+        ``"none"``: returns empty arrays (no inflow term).
+    inlet_centroids_m:
+        (I, 3) inlet face centroids in metres.
+    voxel_centers_m, voxel_velocity_ms:
+        (V, 3) MRI voxel centres (metres) and velocities (m/s).
+    node_points_m, node_velocity_ms:
+        (N, 3) full-mesh node coordinates (metres) and velocities (m/s),
+        required only when ``source == "cfd"``.
+    band_m:
+        Distance threshold from the inlet plane for the ``"mri"`` source.
+
+    Returns
+    -------
+    x_inlet_m : np.ndarray
+        (K, 3) inlet target coordinates in metres.
+    u_inlet_ms : np.ndarray
+        (K, 3) inlet target velocities in m/s.
+    """
+    if source == "none" or inlet_centroids_m.shape[0] == 0:
+        return (
+            np.empty((0, 3), dtype=float),
+            np.empty((0, 3), dtype=float),
+        )
+
+    from scipy.spatial import cKDTree
+
+    if source == "mri":
+        tree = cKDTree(inlet_centroids_m)
+        dists, _ = tree.query(voxel_centers_m)
+        mask = dists <= band_m
+        return voxel_centers_m[mask], voxel_velocity_ms[mask]
+
+    if source == "cfd":
+        if node_points_m is None or node_velocity_ms is None:
+            raise ValueError("source='cfd' requires node_points_m and node_velocity_ms.")
+        tree = cKDTree(node_points_m)
+        _, idx = tree.query(inlet_centroids_m)
+        return inlet_centroids_m, node_velocity_ms[idx]
+
+    raise ValueError(f"Unknown inlet source '{source}'. Use 'mri', 'cfd', or 'none'.")
+
+
 def epoch_rng(base_seed: int, epoch: int) -> np.random.Generator:
     """Return a deterministic RNG for a given epoch.
 

@@ -50,6 +50,7 @@ def main(cfg: DictConfig) -> None:
     from hemodyn_pinn.mri.operator import MRIObservation
     from hemodyn_pinn.pinn.sampling import (
         make_pressure_anchor,
+        select_inlet_targets,
         to_nondim_coords,
         to_nondim_velocity,
     )
@@ -101,11 +102,30 @@ def main(cfg: DictConfig) -> None:
     x_data_nondim = to_nondim_coords(mri_obs.voxel_centers_mm * 1e-3)
     u_obs_nondim  = to_nondim_velocity(mri_obs.velocity_ms)
 
+    # ── Inflow magnitude constraint (Tier 2) ─────────────────────────────────
+    inlet_mask        = sol["inlet_mask"].astype(bool)
+    inlet_centroids_m = wall_centroids_m[inlet_mask]
+    inlet_source      = str(cfg.training.get("inlet_source", "none"))
+    x_inlet_m, u_inlet_ms = select_inlet_targets(
+        source=inlet_source,
+        inlet_centroids_m=inlet_centroids_m,
+        voxel_centers_m=mri_obs.voxel_centers_mm * 1e-3,
+        voxel_velocity_ms=mri_obs.velocity_ms,
+        node_points_m=mesh.points_m,
+        node_velocity_ms=sol["velocity"],
+        band_m=float(cfg.training.get("inlet_band_mm", 2.0)) * 1e-3,
+    )
+    x_inlet_nondim = to_nondim_coords(x_inlet_m)
+    u_inlet_nondim = to_nondim_velocity(u_inlet_ms)
+
     log.info(
-        "Data summary: %d interior pts | %d wall pts | %d MRI voxels",
+        "Data summary: %d interior pts | %d wall pts | %d MRI voxels | "
+        "%d inlet pts (%s)",
         interior_pts_nondim.shape[0],
         wall_pts_nondim.shape[0],
         x_data_nondim.shape[0],
+        x_inlet_nondim.shape[0],
+        inlet_source,
     )
 
     # ── Architecture flags from config ───────────────────────────────────────
@@ -135,6 +155,10 @@ def main(cfg: DictConfig) -> None:
         use_hard_sdf=use_hard_sdf,
         use_vec_potential=use_vec_potential,
         use_adaptive_weights=use_adaptive_weights,
+        x_inlet_nondim=x_inlet_nondim if x_inlet_nondim.shape[0] > 0 else None,
+        u_inlet_nondim=u_inlet_nondim if x_inlet_nondim.shape[0] > 0 else None,
+        lambda_inlet=float(cfg.training.get("lambda_inlet", 0.0)),
+        relative_data=bool(cfg.training.get("relative_data", True)),
     )
 
     log.info(

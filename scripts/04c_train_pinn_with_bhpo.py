@@ -61,6 +61,7 @@ def main(cfg: DictConfig) -> None:
     from hemodyn_pinn.pinn.networks import PINNNetwork
     from hemodyn_pinn.pinn.sampling import (
         make_pressure_anchor,
+        select_inlet_targets,
         to_nondim_coords,
         to_nondim_velocity,
     )
@@ -122,6 +123,23 @@ def main(cfg: DictConfig) -> None:
     u_obs_nondim = to_nondim_velocity(mri_obs.velocity_ms)
     log.info("MRI observations: %d voxels", x_data_nondim.shape[0])
 
+    # ── Inflow magnitude constraint (Tier 2) ─────────────────────────────────
+    inlet_mask = sol["inlet_mask"].astype(bool)
+    inlet_centroids_m = wall_centroids_m[inlet_mask]
+    inlet_source = str(cfg.training.get("inlet_source", "none"))
+    x_inlet_m, u_inlet_ms = select_inlet_targets(
+        source=inlet_source,
+        inlet_centroids_m=inlet_centroids_m,
+        voxel_centers_m=mri_obs.voxel_centers_mm * 1e-3,
+        voxel_velocity_ms=mri_obs.velocity_ms,
+        node_points_m=mesh.points_m,
+        node_velocity_ms=sol["velocity"],
+        band_m=float(cfg.training.get("inlet_band_mm", 2.0)) * 1e-3,
+    )
+    x_inlet_nondim = to_nondim_coords(x_inlet_m)
+    u_inlet_nondim = to_nondim_velocity(u_inlet_ms)
+    log.info("Inlet targets (%s): %d points", inlet_source, x_inlet_nondim.shape[0])
+
     # ── Architecture flags (must match the BHPO run) ─────────────────────────
     use_hard_sdf         = bool(cfg.bhpo.get("use_hard_sdf", False))
     use_vec_potential    = bool(cfg.bhpo.get("use_vec_potential", False))
@@ -161,7 +179,7 @@ def main(cfg: DictConfig) -> None:
         n_lbfgs=int(cfg.bhpo.n_lbfgs_full),
         lr_adam=best_hp["lr_adam"],
         lr_lbfgs=1.0,
-        lambda_data=1.0,
+        lambda_data=best_hp.get("lambda_data", 1.0),
         lambda_phys=best_hp["lambda_phys"],
         lambda_bc=best_hp["lambda_bc"],
         lambda_anchor=1.0,
@@ -171,6 +189,8 @@ def main(cfg: DictConfig) -> None:
         use_hard_sdf=use_hard_sdf,
         use_vec_potential=use_vec_potential,
         use_adaptive_weights=use_adaptive_weights,
+        relative_data=bool(cfg.training.get("relative_data", True)),
+        lambda_inlet=float(cfg.training.get("lambda_inlet", 0.0)),
     )
 
     run_id = f"{case_id}_{voxel_tag}_bhpo"
@@ -202,6 +222,8 @@ def main(cfg: DictConfig) -> None:
         u_obs_nondim=u_obs_nondim,
         wall_pts_m=wall_pts_m if use_hard_sdf else None,
         out_dir=out_dir,
+        x_inlet_nondim=x_inlet_nondim,
+        u_inlet_nondim=u_inlet_nondim,
     )
 
     # ── Train ────────────────────────────────────────────────────────────────

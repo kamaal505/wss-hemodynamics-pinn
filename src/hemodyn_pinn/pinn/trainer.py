@@ -100,6 +100,9 @@ class PINNConfig:
     use_vec_potential: bool = False
     use_adaptive_weights: bool = False
     sa_weight_lr: float = 1e-3
+    # Magnitude-collapse fixes
+    relative_data: bool = True
+    lambda_inlet: float = 0.0
 
 
 class PINNTrainer:
@@ -126,6 +129,9 @@ class PINNTrainer:
         cfg.use_hard_sdf=True to build the WallSDF tree.
     out_dir:
         Directory for checkpoints and loss history.
+    x_inlet_nondim, u_inlet_nondim:
+        (K, 3) non-dim inlet-plane coordinates and target velocities for the
+        inflow magnitude constraint.  Active only when cfg.lambda_inlet > 0.
     """
 
     def __init__(
@@ -139,6 +145,8 @@ class PINNTrainer:
         u_obs_nondim: np.ndarray,
         wall_pts_m: Optional[np.ndarray] = None,
         out_dir: Optional[pathlib.Path | str] = None,
+        x_inlet_nondim: Optional[np.ndarray] = None,
+        u_inlet_nondim: Optional[np.ndarray] = None,
     ) -> None:
         self.net = net
         self.cfg = cfg
@@ -153,6 +161,19 @@ class PINNTrainer:
         self.anchor_pt = _t(anchor_pt_nondim)
         self.x_data = _t(x_data)
         self.u_obs = _t(u_obs_nondim)
+
+        # Inlet observations for the inflow magnitude constraint (Tier 2)
+        self.x_inlet: Optional[Tensor] = None
+        self.u_inlet: Optional[Tensor] = None
+        self._x_inlet_np: Optional[np.ndarray] = None
+        if (
+            x_inlet_nondim is not None
+            and u_inlet_nondim is not None
+            and x_inlet_nondim.shape[0] > 0
+        ):
+            self.x_inlet = _t(x_inlet_nondim)
+            self.u_inlet = _t(u_inlet_nondim)
+            self._x_inlet_np = x_inlet_nondim
 
         self._interior_np = interior_pts_nondim
         self._wall_np = wall_pts_nondim
@@ -181,6 +202,7 @@ class PINNTrainer:
         # ------------------------------------------------------------------
         self._sdf_interior: Optional[Tensor] = None
         self._sdf_data: Optional[Tensor] = None
+        self._sdf_inlet: Optional[Tensor] = None
 
         if cfg.use_hard_sdf:
             if wall_pts_m is None:
@@ -202,6 +224,13 @@ class PINNTrainer:
             self._sdf_data = torch.tensor(
                 data_sdf, dtype=torch.float32, device=self.device
             )
+
+            # Inlet target points (open boundary — non-zero SDF away from wall)
+            if self._x_inlet_np is not None:
+                inlet_sdf = sdf_fn.nondim(self._x_inlet_np, L_SCALE)
+                self._sdf_inlet = torch.tensor(
+                    inlet_sdf, dtype=torch.float32, device=self.device
+                )
             log.info(
                 "SDF pre-computed.  Interior min/mean/max: %.4f / %.4f / %.4f (nondim)",
                 float(interior_sdf.min()),
@@ -215,13 +244,18 @@ class PINNTrainer:
         self._sa_loss: Optional[SelfAdaptiveLoss] = None
         effective_lambda_bc = 0.0 if cfg.use_hard_sdf else cfg.lambda_bc
 
+        self._use_inlet = self.x_inlet is not None and cfg.lambda_inlet > 0.0
+
         if cfg.use_adaptive_weights:
-            self._sa_loss = SelfAdaptiveLoss({
+            sa_init = {
                 "data":   cfg.lambda_data,
                 "phys":   cfg.lambda_phys,
                 "bc":     effective_lambda_bc,
                 "anchor": cfg.lambda_anchor,
-            })
+            }
+            if self._use_inlet:
+                sa_init["inlet"] = cfg.lambda_inlet
+            self._sa_loss = SelfAdaptiveLoss(sa_init)
             self._sa_loss.to(self.device)
             log.info("SelfAdaptiveLoss initialised: %s", self._sa_loss.lambdas)
 
@@ -285,27 +319,33 @@ class PINNTrainer:
         if self._sa_loss is not None:
             from hemodyn_pinn.pinn.losses import (
                 data_loss as _dl,
+                inlet_loss as _il,
                 stokes_residual_loss as _pl,
                 bc_loss as _bc,
                 pressure_anchor_loss as _al,
             )
             L_data   = _dl(self.net, self.x_data, self.u_obs,
-                           sdf_vals=self._sdf_data)
+                           sdf_vals=self._sdf_data, relative=cfg.relative_data)
             L_phys   = _pl(self.net, x_colloc,
                            sdf_vals=sdf_colloc, skip_div_loss=self._skip_div)
             L_bc     = _bc(self.net, x_wall)
             L_anchor = _al(self.net, self.anchor_pt)
 
-            total = self._sa_loss({
-                "data": L_data, "phys": L_phys,
-                "bc": L_bc, "anchor": L_anchor,
-            })
+            sa_terms = {"data": L_data, "phys": L_phys, "bc": L_bc, "anchor": L_anchor}
+            L_inlet = None
+            if self._use_inlet:
+                L_inlet = _il(self.net, self.x_inlet, self.u_inlet,
+                              sdf_vals=self._sdf_inlet, relative=cfg.relative_data)
+                sa_terms["inlet"] = L_inlet
+
+            total = self._sa_loss(sa_terms)
             lam = self._sa_loss.lambdas
             breakdown = {
                 "loss_data":      float(L_data.detach()),
                 "loss_phys":      float(L_phys.detach()),
                 "loss_bc":        float(L_bc.detach()),
                 "loss_anchor":    float(L_anchor.detach()),
+                "loss_inlet":     float(L_inlet.detach()) if L_inlet is not None else 0.0,
                 "loss_total":     float(total.detach()),
                 "lambda_data":    lam["data"],
                 "lambda_phys":    lam["phys"],
@@ -327,6 +367,11 @@ class PINNTrainer:
                 sdf_data=self._sdf_data,
                 sdf_colloc=sdf_colloc,
                 skip_div_loss=self._skip_div,
+                relative_data=cfg.relative_data,
+                x_inlet=self.x_inlet if self._use_inlet else None,
+                u_inlet=self.u_inlet if self._use_inlet else None,
+                sdf_inlet=self._sdf_inlet,
+                lambda_inlet=cfg.lambda_inlet,
             )
         return total, breakdown
 
@@ -340,9 +385,23 @@ class PINNTrainer:
         torch.save(state, path)
         log.debug("Checkpoint saved: %s", path)
 
-    def _maybe_update_best(self, loss_val: float) -> None:
-        if loss_val < self.best_loss:
-            self.best_loss = loss_val
+    def _selection_metric(self, breakdown: dict) -> float:
+        """Metric used to pick the best checkpoint.
+
+        Selecting by total loss rewards the trivial near-zero Stokes solution
+        (it has the lowest physics + total loss).  Instead we select by the
+        observation misfit — data fit plus, if active, the inflow fit — so a
+        collapsed field (high data loss) is never saved as "best".
+        """
+        metric = breakdown.get("loss_data", breakdown["loss_total"])
+        if self._use_inlet:
+            metric = metric + breakdown.get("loss_inlet", 0.0)
+        return metric
+
+    def _maybe_update_best(self, breakdown: dict) -> None:
+        metric = self._selection_metric(breakdown)
+        if metric < self.best_loss:
+            self.best_loss = metric
             self.best_state = {
                 k: v.cpu().clone() for k, v in self.net.state_dict().items()
             }
@@ -402,7 +461,7 @@ class PINNTrainer:
             breakdown["phase"] = "adam"
             breakdown["lr"] = float(scheduler.get_last_lr()[0])
             self.history.append(breakdown)
-            self._maybe_update_best(breakdown["loss_total"])
+            self._maybe_update_best(breakdown)
 
             if (epoch + 1) % cfg.checkpoint_every == 0:
                 log.info(
@@ -454,7 +513,7 @@ class PINNTrainer:
             breakdown["phase"] = "lbfgs"
             breakdown["lr"] = cfg.lr_lbfgs
             self.history.append(breakdown)
-            self._maybe_update_best(breakdown["loss_total"])
+            self._maybe_update_best(breakdown)
             lbfgs_iter[0] += 1
             if lbfgs_iter[0] % 100 == 0:
                 log.info(

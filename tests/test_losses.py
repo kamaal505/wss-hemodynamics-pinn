@@ -25,6 +25,7 @@ from hemodyn_pinn.pinn.losses import (
     SelfAdaptiveLoss,
     bc_loss,
     data_loss,
+    inlet_loss,
     pressure_anchor_loss,
     stokes_residual_loss,
     total_loss,
@@ -76,6 +77,14 @@ class ZeroPressureAtPointNet(nn.Module):
         return torch.zeros(N, 4, device=x.device, dtype=x.dtype)
 
 
+class ZeroVelSDFNet(nn.Module):
+    """Always outputs zero velocity; accepts sdf_vals (for relative-loss tests)."""
+
+    def forward(self, x: Tensor, sdf_vals=None) -> Tensor:
+        N = x.shape[0]
+        return torch.zeros(N, 4, device=x.device, dtype=x.dtype)
+
+
 # ---------------------------------------------------------------------------
 # data_loss
 # ---------------------------------------------------------------------------
@@ -110,6 +119,68 @@ class TestDataLoss:
         x_data = torch.rand(8, 3)
         u_obs = torch.rand(8, 3)
         loss = data_loss(small_net, x_data, u_obs)
+        loss.backward()
+        grads = [p.grad for p in small_net.parameters() if p.grad is not None]
+        assert len(grads) > 0
+
+    def test_relative_zero_prediction_is_one(self) -> None:
+        """Relative data loss ≈ 1.0 when the network predicts zero velocity.
+
+        This is the collapse signature: a near-zero field gives NRMSE ≈ 1.
+        """
+        net = ZeroVelSDFNet()
+        torch.manual_seed(4)
+        x_data = torch.rand(20, 3)
+        u_obs = torch.rand(20, 3) + 0.5   # strictly non-zero magnitudes
+        loss = data_loss(net, x_data, u_obs, relative=True)
+        assert float(loss.detach()) == pytest.approx(1.0, rel=1e-5)
+
+    def test_relative_normalises_absolute(self, small_net: PINNNetwork) -> None:
+        """relative == absolute / mean(u_obs²)."""
+        torch.manual_seed(5)
+        x_data = torch.rand(12, 3)
+        u_obs = torch.rand(12, 3) + 0.2
+        abs_loss = float(data_loss(small_net, x_data, u_obs, relative=False).detach())
+        rel_loss = float(data_loss(small_net, x_data, u_obs, relative=True).detach())
+        denom = float((u_obs ** 2).mean())
+        assert rel_loss == pytest.approx(abs_loss / denom, rel=1e-5)
+
+    def test_relative_zero_when_exact(self, small_net: PINNNetwork) -> None:
+        torch.manual_seed(6)
+        x_data = torch.rand(10, 3)
+        with torch.no_grad():
+            pred = small_net(x_data)[:, :3]
+        loss = data_loss(small_net, x_data, pred, relative=True)
+        assert float(loss.detach()) == pytest.approx(0.0, abs=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# inlet_loss (Tier 2 — inflow magnitude constraint)
+# ---------------------------------------------------------------------------
+
+
+class TestInletLoss:
+    def test_zero_when_exact(self, small_net: PINNNetwork) -> None:
+        torch.manual_seed(7)
+        x_inlet = torch.rand(8, 3)
+        with torch.no_grad():
+            u_inlet = small_net(x_inlet)[:, :3]
+        loss = inlet_loss(small_net, x_inlet, u_inlet)
+        assert float(loss.detach()) == pytest.approx(0.0, abs=1e-7)
+
+    def test_relative_zero_prediction_is_one(self) -> None:
+        net = ZeroVelSDFNet()
+        torch.manual_seed(8)
+        x_inlet = torch.rand(10, 3)
+        u_inlet = torch.rand(10, 3) + 0.5
+        loss = inlet_loss(net, x_inlet, u_inlet, relative=True)
+        assert float(loss.detach()) == pytest.approx(1.0, rel=1e-5)
+
+    def test_output_is_scalar_and_gradients_flow(self, small_net: PINNNetwork) -> None:
+        x_inlet = torch.rand(8, 3)
+        u_inlet = torch.rand(8, 3)
+        loss = inlet_loss(small_net, x_inlet, u_inlet)
+        assert loss.shape == ()
         loss.backward()
         grads = [p.grad for p in small_net.parameters() if p.grad is not None]
         assert len(grads) > 0
@@ -253,8 +324,28 @@ class TestTotalLoss:
         x_data, x_colloc, x_wall, x_anchor = rng_pts
         u_obs = torch.rand(20, 3)
         _, bd = total_loss(small_net, x_data, u_obs, x_colloc, x_wall, x_anchor)
-        for key in ("loss_data", "loss_phys", "loss_bc", "loss_anchor", "loss_total"):
+        for key in ("loss_data", "loss_phys", "loss_bc", "loss_anchor",
+                    "loss_inlet", "loss_total"):
             assert key in bd, f"Missing key: {key}"
+
+    def test_inlet_term_included_when_weighted(
+        self, small_net: PINNNetwork, rng_pts: tuple
+    ) -> None:
+        """A non-zero lambda_inlet must add a positive contribution to total."""
+        x_data, x_colloc, x_wall, x_anchor = rng_pts
+        u_obs = torch.rand(20, 3)
+        x_inlet = torch.rand(6, 3)
+        u_inlet = torch.rand(6, 3) + 0.3
+        loss_no, bd_no = total_loss(
+            small_net, x_data, u_obs, x_colloc, x_wall, x_anchor,
+        )
+        loss_yes, bd_yes = total_loss(
+            small_net, x_data, u_obs, x_colloc, x_wall, x_anchor,
+            x_inlet=x_inlet, u_inlet=u_inlet, lambda_inlet=5.0,
+        )
+        assert bd_no["loss_inlet"] == pytest.approx(0.0, abs=1e-12)
+        assert bd_yes["loss_inlet"] > 0.0
+        assert float(loss_yes) > float(loss_no)
 
     def test_weighted_sum_consistent(
         self, small_net: PINNNetwork, rng_pts: tuple

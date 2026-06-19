@@ -45,6 +45,7 @@ def main(cfg: DictConfig) -> None:
     from hemodyn_pinn.pinn.networks import PINNNetwork, nondim_coords, nondim_velocity
     from hemodyn_pinn.pinn.sampling import (
         make_pressure_anchor,
+        select_inlet_targets,
         to_nondim_coords,
         to_nondim_velocity,
     )
@@ -110,6 +111,23 @@ def main(cfg: DictConfig) -> None:
 
     log.info("MRI observations: %d voxels", x_data_nondim.shape[0])
 
+    # ── Inflow magnitude constraint (Tier 2) ─────────────────────────────────
+    inlet_mask = sol["inlet_mask"].astype(bool)
+    inlet_centroids_m = wall_centroids_m[inlet_mask]
+    inlet_source = str(cfg.training.get("inlet_source", "none"))
+    x_inlet_m, u_inlet_ms = select_inlet_targets(
+        source=inlet_source,
+        inlet_centroids_m=inlet_centroids_m,
+        voxel_centers_m=mri_obs.voxel_centers_mm * 1e-3,
+        voxel_velocity_ms=mri_obs.velocity_ms,
+        node_points_m=mesh.points_m,
+        node_velocity_ms=sol["velocity"],
+        band_m=float(cfg.training.get("inlet_band_mm", 2.0)) * 1e-3,
+    )
+    x_inlet_nondim = to_nondim_coords(x_inlet_m)
+    u_inlet_nondim = to_nondim_velocity(u_inlet_ms)
+    log.info("Inlet targets (%s): %d points", inlet_source, x_inlet_nondim.shape[0])
+
     # ── Build network ────────────────────────────────────────────────────────
     net = PINNNetwork(
         n_hidden=cfg.model.n_hidden,
@@ -148,6 +166,8 @@ def main(cfg: DictConfig) -> None:
         use_vec_potential=cfg.model.use_vec_potential,
         use_adaptive_weights=cfg.training.use_adaptive_weights,
         sa_weight_lr=float(cfg.training.sa_weight_lr),
+        relative_data=bool(cfg.training.get("relative_data", True)),
+        lambda_inlet=float(cfg.training.get("lambda_inlet", 0.0)),
     )
 
     run_id = f"{case_id}_{voxel_tag}_adam{cfg.training.n_adam}"
@@ -163,6 +183,8 @@ def main(cfg: DictConfig) -> None:
         u_obs_nondim=u_obs_nondim,
         wall_pts_m=wall_pts_m if cfg.model.use_hard_sdf else None,
         out_dir=out_dir,
+        x_inlet_nondim=x_inlet_nondim,
+        u_inlet_nondim=u_inlet_nondim,
     )
 
     # ── Train ────────────────────────────────────────────────────────────────

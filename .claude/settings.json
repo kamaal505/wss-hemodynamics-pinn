@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($PY = Get-Content graphify-out\\\\.graphify_python; & $PY -m graphify query \"What is the exact sequence of commands to run the pipeline from BHPO search through retraining, evaluation, sweep, and figure generation? What environment setup \\(venv, device flags like MPS\\) is needed on a Mac \\(M3 Pro\\)?\" --dfs --budget 1800)",
+      "PowerShell($PY = Get-Content graphify-out\\\\.graphify_python; & $PY -m graphify query \"README.md pipeline usage and environment setup commands - venv activation, uv pip install, running scripts 04b 04c 05 06 07 in order with geometry and bhpo flags\" --budget 1800)"
+    ]
+  }
+}

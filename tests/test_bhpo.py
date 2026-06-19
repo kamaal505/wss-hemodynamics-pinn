@@ -32,12 +32,13 @@ from hemodyn_pinn.bhpo.objective import BHPOObjective
 
 
 _ALL_HP_KEYS = frozenset(
-    ["lambda_phys", "lambda_bc", "n_layers", "n_hidden",
+    ["lambda_data", "lambda_phys", "lambda_bc", "n_layers", "n_hidden",
      "activation", "use_rff", "rff_sigma", "lr_adam",
      "n_colloc", "wall_bias_frac"]
 )
 
 _BASE_PARAMS = [
+    10.0,  # lambda_data
     1.0,   # lambda_phys
     5.0,   # lambda_bc
     4,     # n_layers
@@ -93,28 +94,29 @@ class TestDecodeParams:
 
     def test_n_hidden_index_mapping(self) -> None:
         for idx, expected in enumerate(N_HIDDEN_MAP):
-            params = list(_BASE_PARAMS); params[3] = idx
+            params = list(_BASE_PARAMS); params[4] = idx
             assert decode_params(params)["n_hidden"] == expected
 
     def test_activation_index_mapping(self) -> None:
         for idx, expected in enumerate(ACTIVATION_MAP):
-            params = list(_BASE_PARAMS); params[4] = idx
+            params = list(_BASE_PARAMS); params[5] = idx
             assert decode_params(params)["activation"] == expected
 
     def test_n_colloc_index_mapping(self) -> None:
         for idx, expected in enumerate(N_COLLOC_MAP):
-            params = list(_BASE_PARAMS); params[8] = idx
+            params = list(_BASE_PARAMS); params[9] = idx
             assert decode_params(params)["n_colloc"] == expected
 
     def test_use_rff_bool_conversion(self) -> None:
-        p_false = list(_BASE_PARAMS); p_false[5] = 0
-        p_true  = list(_BASE_PARAMS); p_true[5] = 1
+        p_false = list(_BASE_PARAMS); p_false[6] = 0
+        p_true  = list(_BASE_PARAMS); p_true[6] = 1
         assert decode_params(p_false)["use_rff"] is False
         assert decode_params(p_true)["use_rff"] is True
 
     def test_float_fields_are_float(self) -> None:
         hp = decode_params(_BASE_PARAMS)
-        for key in ("lambda_phys", "lambda_bc", "rff_sigma", "lr_adam", "wall_bias_frac"):
+        for key in ("lambda_data", "lambda_phys", "lambda_bc", "rff_sigma",
+                    "lr_adam", "wall_bias_frac"):
             assert isinstance(hp[key], float), f"{key} should be float"
 
 

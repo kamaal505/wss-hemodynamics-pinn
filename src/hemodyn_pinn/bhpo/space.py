@@ -5,7 +5,9 @@ Optuna interface (optuna_suggest from a Trial object).  The Optuna TPE sampler
 handles categorical dimensions natively, so integer-encoding of categoricals
 is no longer needed in the Optuna path.
 
-The search space covers 10 dimensions; lambda_data and lambda_anchor are fixed.
+The search space covers 11 dimensions; lambda_anchor is fixed.  lambda_data is
+searched (log-uniform, 1–1000): under-weighting it collapses the Stokes field to
+the trivial u≡0 solution.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ N_COLLOC_MAP: list[int] = [5_000, 10_000, 20_000]
 try:
     from skopt.space import Integer, Real
     SEARCH_SPACE = [
+        Real(1.0, 1000.0, prior="log-uniform", name="lambda_data"),
         Real(0.01, 10.0, prior="log-uniform", name="lambda_phys"),
         Real(0.10, 10.0, prior="log-uniform", name="lambda_bc"),
         Integer(3, 6,    name="n_layers"),
@@ -50,11 +53,12 @@ except ImportError:
 def decode_params(params: list) -> dict:
     """Convert a raw skopt parameter list to a human-readable HP dict."""
     (
-        lambda_phys, lambda_bc,
+        lambda_data, lambda_phys, lambda_bc,
         n_layers, n_hidden_idx, activation_idx, use_rff_int, rff_sigma,
         lr_adam, n_colloc_idx, wall_bias_frac,
     ) = params
     return {
+        "lambda_data":    float(lambda_data),
         "lambda_phys":    float(lambda_phys),
         "lambda_bc":      float(lambda_bc),
         "n_layers":       int(n_layers),
@@ -89,6 +93,7 @@ def optuna_suggest(trial: "optuna.Trial") -> dict:
     dict
         Human-readable HP dict with the same keys as ``decode_params``.
     """
+    lambda_data    = trial.suggest_float("lambda_data", 1.0, 1000.0, log=True)
     lambda_phys    = trial.suggest_float("lambda_phys", 0.01, 10.0, log=True)
     lambda_bc      = trial.suggest_float("lambda_bc",   0.10, 10.0, log=True)
     n_layers       = trial.suggest_int("n_layers",      3, 6)
@@ -101,6 +106,7 @@ def optuna_suggest(trial: "optuna.Trial") -> dict:
     wall_bias_frac = trial.suggest_float("wall_bias_frac", 0.0, 0.5)
 
     return {
+        "lambda_data":    lambda_data,
         "lambda_phys":    lambda_phys,
         "lambda_bc":      lambda_bc,
         "n_layers":       n_layers,

@@ -41,7 +41,7 @@ _FAILURE_PENALTY: float = 2.0
 
 _LOG_COLUMNS = [
     "trial_id", "wss_nrmse", "elapsed_s", "timestamp",
-    "lambda_phys", "lambda_bc", "n_layers", "n_hidden",
+    "lambda_data", "lambda_phys", "lambda_bc", "n_layers", "n_hidden",
     "activation", "use_rff", "rff_sigma", "lr_adam",
     "n_colloc", "wall_bias_frac",
 ]
@@ -107,10 +107,20 @@ class BHPOObjective:
         use_hard_sdf: bool = False,
         use_vec_potential: bool = False,
         use_adaptive_weights: bool = False,
+        x_inlet_nondim: Optional[np.ndarray] = None,
+        u_inlet_nondim: Optional[np.ndarray] = None,
+        lambda_inlet: float = 0.0,
+        relative_data: bool = True,
     ) -> None:
         from hemodyn_pinn.bhpo.search import auto_device
         self.device = auto_device() if device == "auto" else device
         log.info("BHPO device: %s", self.device)
+
+        # Inflow magnitude constraint + scale-invariant misfit (anti-collapse)
+        self._x_inlet = x_inlet_nondim
+        self._u_inlet = u_inlet_nondim
+        self.lambda_inlet = lambda_inlet
+        self.relative_data = relative_data
 
         # Architecture flags fixed for this search run
         self.use_hard_sdf = use_hard_sdf
@@ -237,7 +247,7 @@ class BHPOObjective:
             n_lbfgs=self.n_lbfgs_trial,
             lr_adam=hp["lr_adam"],
             lr_lbfgs=1.0,
-            lambda_data=1.0,
+            lambda_data=hp.get("lambda_data", 1.0),
             lambda_phys=hp["lambda_phys"],
             lambda_bc=hp["lambda_bc"],
             lambda_anchor=1.0,
@@ -247,6 +257,8 @@ class BHPOObjective:
             use_hard_sdf=self.use_hard_sdf,
             use_vec_potential=self.use_vec_potential,
             use_adaptive_weights=self.use_adaptive_weights,
+            relative_data=self.relative_data,
+            lambda_inlet=self.lambda_inlet,
         )
         trainer = PINNTrainer(
             net=net,
@@ -258,6 +270,8 @@ class BHPOObjective:
             u_obs_nondim=self._u_obs,
             wall_pts_m=self._train_wall_m,
             out_dir=None,
+            x_inlet_nondim=self._x_inlet,
+            u_inlet_nondim=self._u_inlet,
         )
         trainer.fit()
 

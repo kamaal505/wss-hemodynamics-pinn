@@ -22,10 +22,21 @@ training:
   n_lbfgs: 5000        # L-BFGS max iterations
   lr_adam: 1.0e-3
   lr_lbfgs: 1.0
-  lambda_data: 1.0
+  # lambda_data ≫ lambda_phys: steady Stokes is linear & homogeneous, so u≡0 is
+  # an exact zero-residual solution.  The data term is the main force pinning the
+  # magnitude — under-weighting it collapses the field ~40×.  See notes.
+  lambda_data: 10.0
   lambda_phys: 1.0
   lambda_bc: 10.0
   lambda_anchor: 1.0
+  # Scale-invariant (relative) data/inlet misfit so the weights are meaningful
+  # despite the tiny absolute velocity scale (U_SCALE = 2e-5 m/s).
+  relative_data: true
+  # Inflow magnitude constraint (Tier 2).  Sources the inlet velocity honestly
+  # from the near-inlet MRI voxels; set inlet_source=none to disable.
+  lambda_inlet: 10.0
+  inlet_source: mri   # mri | cfd (diagnostic) | none
+  inlet_band_mm: 2.0  # voxels within this distance of the inlet plane
   checkpoint_every: 1000
   device: "cpu"        # override to "cuda" or "mps" when GPU available
   wall_bias_frac: 0.4  # Fix E: 40% of collocation pts from near-wall pool

@@ -19,10 +19,17 @@ training:
   n_lbfgs: 5000
   lr_adam: 1.0e-3
   lr_lbfgs: 1.0
-  lambda_data: 1.0
+  # See pinn_base.yaml: lambda_data ≫ lambda_phys prevents magnitude collapse.
+  lambda_data: 10.0
   lambda_phys: 1.0
   lambda_bc: 10.0
   lambda_anchor: 1.0
+  relative_data: true
+  lambda_inlet: 10.0
+  inlet_source: mri   # mri | cfd (diagnostic) | none
+  inlet_band_mm: 2.0
   checkpoint_every: 1000
   device: "cpu"
   wall_bias_frac: 0.0  # fraction of collocation pts drawn from near-wall pool
+  use_adaptive_weights: false
+  sa_weight_lr: 1.0e-3
