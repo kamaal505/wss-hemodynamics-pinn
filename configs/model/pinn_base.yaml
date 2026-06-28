@@ -12,8 +12,13 @@ model:
   activation: tanh     # tanh | swish | gelu
   # Fix A — hard SDF no-slip (exact boundary condition via SDF multiplication)
   use_hard_sdf: true
-  # Fix B — vector potential parameterisation (div-free by identity)
-  use_vec_potential: true
+  # Fix B — vector potential parameterisation (div-free by identity).
+  # DEMOTED to false: u = curl(A) needs 3rd-order autograd for the Stokes
+  # residual (gradient-starved), and WSS = mu(U/L)|curl(A)_tang| collapses near
+  # the wall independently of velocity.  Soft divergence is enforced instead
+  # (skip_div_loss tracks this flag).  Re-enable only if a diagnosis shows it
+  # trains.  See notes/magnitude_collapse_fix.md (Fix M).
+  use_vec_potential: false
 
 training:
   n_colloc: 10000      # collocation points per epoch
@@ -37,6 +42,15 @@ training:
   lambda_inlet: 10.0
   inlet_source: mri   # mri | cfd (diagnostic) | none
   inlet_band_mm: 2.0  # voxels within this distance of the inlet plane
+  # Dense interpolant supervision + curriculum (Fixes J–L).  A dense velocity
+  # field interpolated from the sparse MRI voxels gives a non-zero magnitude
+  # target everywhere, making the trivial u≡0 collapse structurally impossible.
+  lambda_aux: 5.0         # weight on the dense interpolant term (pre-decay)
+  aux_decay_frac: 0.5     # lambda_aux → 0 linearly over first 50% of Adam epochs
+  lambda_mag_floor: 1.0   # one-sided penalty if predicted RMS < observed RMS
+  n_warmup: 2000          # data+aux-only warm-up (physics off) before ramping
+  interp_method: rbf      # rbf | linear  (scattered-data interpolant)
+  n_aux: 4096             # dense-prior points streamed per epoch (0 = use all)
   checkpoint_every: 1000
   device: "cpu"        # override to "cuda" or "mps" when GPU available
   wall_bias_frac: 0.4  # Fix E: 40% of collocation pts from near-wall pool

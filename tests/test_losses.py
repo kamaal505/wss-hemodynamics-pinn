@@ -23,9 +23,11 @@ from torch import Tensor
 
 from hemodyn_pinn.pinn.losses import (
     SelfAdaptiveLoss,
+    aux_data_loss,
     bc_loss,
     data_loss,
     inlet_loss,
+    magnitude_floor_loss,
     pressure_anchor_loss,
     stokes_residual_loss,
     total_loss,
@@ -180,6 +182,58 @@ class TestInletLoss:
         x_inlet = torch.rand(8, 3)
         u_inlet = torch.rand(8, 3)
         loss = inlet_loss(small_net, x_inlet, u_inlet)
+        assert loss.shape == ()
+        loss.backward()
+        grads = [p.grad for p in small_net.parameters() if p.grad is not None]
+        assert len(grads) > 0
+
+
+# ---------------------------------------------------------------------------
+# Fixes J–L — aux_data_loss + magnitude_floor_loss (anti-collapse)
+# ---------------------------------------------------------------------------
+
+
+class TestAuxDataLoss:
+    def test_zero_when_exact(self, small_net: PINNNetwork) -> None:
+        torch.manual_seed(11)
+        x_aux = torch.rand(20, 3)
+        with torch.no_grad():
+            u_aux = small_net(x_aux)[:, :3]
+        loss = aux_data_loss(small_net, x_aux, u_aux, relative=True)
+        assert float(loss.detach()) == pytest.approx(0.0, abs=1e-7)
+
+    def test_relative_zero_prediction_is_one(self) -> None:
+        net = ZeroVelSDFNet()
+        torch.manual_seed(12)
+        x_aux = torch.rand(15, 3)
+        u_aux = torch.rand(15, 3) + 0.5
+        loss = aux_data_loss(net, x_aux, u_aux, relative=True)
+        assert float(loss.detach()) == pytest.approx(1.0, rel=1e-5)
+
+    def test_gradients_flow(self, small_net: PINNNetwork) -> None:
+        x_aux = torch.rand(8, 3)
+        u_aux = torch.rand(8, 3)
+        loss = aux_data_loss(small_net, x_aux, u_aux)
+        loss.backward()
+        grads = [p.grad for p in small_net.parameters() if p.grad is not None]
+        assert len(grads) > 0
+
+
+class TestMagnitudeFloorLoss:
+    def test_zero_when_above_floor(self, small_net: PINNNetwork) -> None:
+        """One-sided: zero penalty when predicted RMS already meets the floor."""
+        x_colloc = torch.rand(30, 3)
+        loss = magnitude_floor_loss(small_net, x_colloc, target_rms=0.0)
+        assert float(loss.detach()) == pytest.approx(0.0, abs=1e-12)
+
+    def test_positive_when_below_floor(self, small_net: PINNNetwork) -> None:
+        x_colloc = torch.rand(30, 3)
+        loss = magnitude_floor_loss(small_net, x_colloc, target_rms=1e6)
+        assert float(loss.detach()) > 0.0
+
+    def test_output_is_scalar_and_gradients_flow(self, small_net: PINNNetwork) -> None:
+        x_colloc = torch.rand(20, 3)
+        loss = magnitude_floor_loss(small_net, x_colloc, target_rms=1e6)
         assert loss.shape == ()
         loss.backward()
         grads = [p.grad for p in small_net.parameters() if p.grad is not None]
@@ -345,6 +399,28 @@ class TestTotalLoss:
         )
         assert bd_no["loss_inlet"] == pytest.approx(0.0, abs=1e-12)
         assert bd_yes["loss_inlet"] > 0.0
+        assert float(loss_yes) > float(loss_no)
+
+    def test_aux_and_mag_floor_included_when_weighted(
+        self, small_net: PINNNetwork, rng_pts: tuple
+    ) -> None:
+        """Non-zero lambda_aux / lambda_mag_floor add positive contributions."""
+        x_data, x_colloc, x_wall, x_anchor = rng_pts
+        u_obs = torch.rand(20, 3)
+        x_aux = torch.rand(25, 3)
+        u_aux = torch.rand(25, 3) + 0.3
+        loss_no, bd_no = total_loss(
+            small_net, x_data, u_obs, x_colloc, x_wall, x_anchor,
+        )
+        loss_yes, bd_yes = total_loss(
+            small_net, x_data, u_obs, x_colloc, x_wall, x_anchor,
+            x_aux=x_aux, u_aux=u_aux, lambda_aux=4.0,
+            target_rms=1e6, lambda_mag_floor=2.0,
+        )
+        assert bd_no["loss_aux"] == pytest.approx(0.0, abs=1e-12)
+        assert bd_no["loss_mag_floor"] == pytest.approx(0.0, abs=1e-12)
+        assert bd_yes["loss_aux"] > 0.0
+        assert bd_yes["loss_mag_floor"] > 0.0
         assert float(loss_yes) > float(loss_no)
 
     def test_weighted_sum_consistent(

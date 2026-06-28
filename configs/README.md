@@ -24,9 +24,11 @@ configs/
 │   ├── voxel_1p5mm.yaml
 │   ├── voxel_2p0mm.yaml
 │   └── voxel_2p5mm.yaml
-└── model/               # PINN architecture + training hyperparameters
-    ├── pinn_base.yaml   # plain MLP, no RFF
-    └── pinn_rff.yaml    # MLP with Random Fourier Features
+├── model/               # PINN architecture + training hyperparameters
+│   ├── pinn_base.yaml   # plain MLP, no RFF
+│   └── pinn_rff.yaml    # MLP with Random Fourier Features
+└── bhpo/                # Bayesian HPO search + retrain settings
+    └── default.yaml
 ```
 
 ---
@@ -119,32 +121,83 @@ Configures the PINN architecture and all training hyperparameters for `scripts/0
 
 ### pinn_base.yaml — plain MLP
 
+**Architecture (`model.*`)**
+
 | Key | Default | Description |
 |-----|---------|-------------|
-| `model.n_hidden` | 128 | Hidden units per layer |
-| `model.n_layers` | 4 | Number of hidden layers |
-| `model.use_rff` | false | No Random Fourier Features |
-| `training.n_colloc` | 10000 | Collocation points per epoch |
-| `training.n_wall_bc` | 2000 | Wall BC points per epoch |
-| `training.n_adam` | 50000 | Adam iterations |
-| `training.n_lbfgs` | 5000 | L-BFGS max iterations |
-| `training.lr_adam` | 1e-3 | Adam learning rate |
-| `training.lambda_data` | 1.0 | MRI data loss weight |
-| `training.lambda_phys` | 1.0 | Stokes residual loss weight |
-| `training.lambda_bc` | 10.0 | No-slip BC loss weight |
-| `training.lambda_anchor` | 10.0 | Pressure anchor loss weight |
-| `training.checkpoint_every` | 1000 | Save checkpoint every N Adam steps |
-| `training.device` | `"cpu"` | Set to `"cuda"` for GPU |
+| `n_hidden` | 128 | Hidden units per layer |
+| `n_layers` | 4 | Number of hidden layers |
+| `use_rff` | false | No Random Fourier Features |
+| `use_hard_sdf` | **true** | Exact no-slip via `u = SDF·N(x)` (zeros `lambda_bc`; analytical WSS) |
+| `use_vec_potential` | **false** | Div-free `u = curl(A)` — *demoted* (3rd-order-autograd fragility); soft divergence used instead |
+
+**Training (`training.*`)**
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `n_colloc` | 10000 | Collocation points per epoch |
+| `n_wall_bc` | 2000 | Wall BC points per epoch |
+| `n_adam` | 50000 | Adam iterations |
+| `n_lbfgs` | 5000 | L-BFGS max iterations |
+| `lr_adam` | 1e-3 | Adam learning rate |
+| `lambda_data` | 10.0 | MRI data loss weight (≫ `lambda_phys` to resist collapse) |
+| `lambda_phys` | 1.0 | Stokes residual loss weight |
+| `lambda_bc` | 10.0 | No-slip BC weight (auto-zeroed when `use_hard_sdf=true`) |
+| `lambda_anchor` | 1.0 | Pressure anchor loss weight |
+| `relative_data` | true | Scale-invariant (relative) data/inflow misfit |
+| `lambda_inlet` | 10.0 | Inflow magnitude constraint weight |
+| `inlet_source` | mri | Inlet velocity source: `mri` (honest) \| `cfd` (diagnostic) \| `none` |
+| `inlet_band_mm` | 2.0 | Voxels within this distance of the inlet plane |
+| `lambda_aux` | 5.0 | Dense interpolant prior weight (pre-decay) |
+| `aux_decay_frac` | 0.5 | `lambda_aux` → 0 over the first 50% of Adam epochs |
+| `lambda_mag_floor` | 1.0 | One-sided penalty if predicted RMS < observed RMS |
+| `n_warmup` | 2000 | Data+aux-only warm-up (physics off) before ramping |
+| `interp_method` | rbf | Scattered-data interpolant: `rbf` (thin-plate) \| `linear` |
+| `wall_bias_frac` | 0.4 | Fraction of collocation pts drawn near the wall |
+| `use_adaptive_weights` | false | Self-adaptive (SA-PINN) loss weights |
+| `checkpoint_every` | 1000 | Save checkpoint every N Adam steps |
+| `device` | `"cpu"` | Set to `"cuda"`/`"mps"` for GPU |
+
+> The `lambda_inlet`, `lambda_aux`, `lambda_mag_floor`, `n_warmup`, and `relative_data`
+> knobs are the anti-collapse recipe (see the root README and
+> `notes/magnitude_collapse_fix.md`). Set `lambda_aux=0 n_warmup=0 lambda_mag_floor=0` to
+> run the ablation without it.
 
 ### pinn_rff.yaml — MLP with Random Fourier Features
 
-Extends `pinn_base.yaml` with:
+Extends `pinn_base.yaml` (same training defaults) with:
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `model.use_rff` | true | Prepend RFF encoder |
 | `model.rff_features` | 128 | RFF output dimension |
-| `model.rff_sigma` | 1.0 | Gaussian bandwidth for B matrix |
+| `model.rff_sigma` | 2.0 | Gaussian bandwidth for B matrix |
+
+---
+
+## bhpo/default.yaml
+
+Bayesian HPO settings for `scripts/04b_bhpo_search.py` (search) and
+`scripts/04c_train_pinn_with_bhpo.py` (retrain). Searches an 11-dim space
+(`lambda_data`, `lambda_phys`, `lambda_bc`, `n_layers`, `n_hidden`, `activation`,
+`use_rff`, `rff_sigma`, `lr_adam`, `n_colloc`, `wall_bias_frac`) via Optuna TPE.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `n_calls` | 60 | Total trials (incl. random warm-up) |
+| `n_initial_points` | 12 | Random trials before TPE |
+| `n_adam_trial` | 10000 | Adam steps per trial (short; winner retrained at full budget) |
+| `val_frac` | 0.2 | Held-out wall faces for WSS NRMSE objective |
+| `device` | auto | `auto` → MPS/CUDA/CPU |
+| `backend` | optuna | `optuna` (TPE, resumable) \| `skopt` (legacy GP) |
+| `use_hard_sdf` | true | Architecture family fixed for the search |
+| `use_vec_potential` | false | Demoted (see model defaults) |
+| `lambda_aux` / `aux_decay_frac` / `lambda_mag_floor` / `n_warmup` / `interp_method` | 5.0 / 0.5 / 1.0 / 1000 / rbf | Anti-collapse recipe applied to every trial |
+| `source_case_id` | caseC | Geometry whose `best_params.json` 04c consumes |
+| `n_adam_full` / `n_lbfgs_full` | 50000 / 5000 | Full retrain budget (04c) |
+
+The full retrain (04c) reads the `training.*` curriculum knobs (they scale with the full
+budget); the short trials (04b) read the `bhpo.*` ones.
 
 ---
 

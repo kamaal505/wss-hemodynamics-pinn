@@ -24,6 +24,7 @@ from hemodyn_pinn.bhpo.space import (
 )
 from hemodyn_pinn.bhpo.search import auto_device
 from hemodyn_pinn.bhpo.objective import BHPOObjective
+from hemodyn_pinn.pinn.inference import _is_oom_error
 
 
 # ---------------------------------------------------------------------------
@@ -252,3 +253,85 @@ class TestBHPOObjectiveSmoke:
         nrmse = obj._run_trial(_MINIMAL_HP)
         assert isinstance(nrmse, float)
         assert 0.0 <= nrmse <= 2.0 + 1e-6
+
+
+# ---------------------------------------------------------------------------
+# OOM classification + trial robustness (no silent data abandonment)
+# ---------------------------------------------------------------------------
+
+
+class TestOOMClassification:
+    def test_detects_cuda_oom(self) -> None:
+        assert _is_oom_error(RuntimeError("CUDA out of memory. Tried to allocate 2 GiB"))
+
+    def test_detects_mps_oom(self) -> None:
+        assert _is_oom_error(RuntimeError("MPS backend out of memory (MPS allocated ...)"))
+
+    def test_ignores_non_oom(self) -> None:
+        assert not _is_oom_error(ValueError("bad config"))
+        assert not _is_oom_error(RuntimeError("shape mismatch"))
+
+
+def _robustness_objective(**kw) -> BHPOObjective:
+    interior, wall, normals, cfd_wss, anchor, x_data, u_obs, _ = _minimal_bhpo_data()
+    return BHPOObjective(
+        interior_pts_nondim=interior, wall_pts_nondim=wall,
+        wall_normals=normals, cfd_wss_pa=cfd_wss,
+        anchor_pt_nondim=anchor, x_data=x_data,
+        u_obs_nondim=u_obs, val_frac=0.2,
+        n_adam_trial=2, n_lbfgs_trial=0, device="cpu", **kw,
+    )
+
+
+class TestSafeRunTrial:
+    def test_oom_is_retried_then_succeeds(self) -> None:
+        """A transient OOM shrinks the chunks and retries — not abandoned."""
+        obj = _robustness_objective(n_aux=4096, wss_batch_size=4096)
+        state = {"calls": 0}
+
+        def flaky(hp):
+            state["calls"] += 1
+            if state["calls"] <= 2:
+                raise RuntimeError("CUDA out of memory")
+            return 0.5
+
+        obj._run_trial = flaky
+        nrmse, status = obj._safe_run_trial(_MINIMAL_HP, trial_id=1)
+        assert status == "ok"
+        assert nrmse == pytest.approx(0.5)
+        assert state["calls"] == 3
+        # chunk sizes are restored after the trial
+        assert obj.n_aux == 4096 and obj.wss_batch_size == 4096
+        assert obj.n_oom_trials == 0
+
+    def test_persistent_oom_is_recorded_not_silent(self) -> None:
+        obj = _robustness_objective()
+
+        def always_oom(hp):
+            raise RuntimeError("CUDA out of memory")
+
+        obj._run_trial = always_oom
+        nrmse, status = obj._safe_run_trial(_MINIMAL_HP, trial_id=2)
+        assert status == "oom"
+        assert nrmse == pytest.approx(2.0)        # _FAILURE_PENALTY
+        assert obj.n_oom_trials == 1
+
+    def test_non_oom_error_is_classified(self) -> None:
+        obj = _robustness_objective()
+
+        def boom(hp):
+            raise ValueError("bad config")
+
+        obj._run_trial = boom
+        nrmse, status = obj._safe_run_trial(_MINIMAL_HP, trial_id=3)
+        assert status == "error"
+        assert nrmse == pytest.approx(2.0)
+        assert obj.n_error_trials == 1
+
+    def test_log_writes_status_column(self, tmp_path) -> None:
+        log_path = tmp_path / "trial_log.csv"
+        obj = _robustness_objective(trial_log_path=log_path)
+        obj._log_trial(1, dict(_MINIMAL_HP, lambda_data=10.0), 0.5, 1.2, status="oom")
+        text = log_path.read_text()
+        assert "status" in text.splitlines()[0]
+        assert "oom" in text

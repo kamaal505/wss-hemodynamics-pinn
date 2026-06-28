@@ -2,7 +2,7 @@
 
 Pytest test suite for the `hemodyn_pinn` package. All tests except those marked `slow` run on Windows without FEniCSx.
 
-**Current status:** 116 tests pass (1 dolfinx test auto-skipped on Windows). Zero warnings.
+**Current status:** 262 tests collected; all pass on Windows (1 dolfinx integration test auto-skipped without FEniCSx).
 
 ---
 
@@ -102,13 +102,38 @@ Covers `src/hemodyn_pinn/mri/` (voxelise, noise, operator).
 
 Covers `src/hemodyn_pinn/pinn/losses.py`.
 
-22 tests including:
-- `data_loss` is zero when network perfectly predicts observations
-- `stokes_residual_loss` is zero for an exact Stokes solution (verified analytically)
-- `bc_loss` is zero when network outputs zero at wall points
-- `pressure_anchor_loss` is zero when predicted pressure matches the anchor
-- `total_loss` is a correctly weighted sum of components
+Includes:
+- `data_loss` / `inlet_loss` zero when prediction is exact; relative form ≈ 1 for a zero prediction (the collapse signature)
+- `aux_data_loss` (dense interpolant supervision) zero when exact, ≈ 1 for zero prediction
+- `magnitude_floor_loss` one-sided: zero when RMS meets the floor, positive below
+- `stokes_residual_loss` zero for an exact Stokes solution (verified analytically); `skip_div_loss` variant
+- `bc_loss` / `pressure_anchor_loss` zero in the respective trivial cases
+- `total_loss` is a correctly weighted sum; inlet/aux/magnitude-floor terms add positive contributions when weighted
+- `SelfAdaptiveLoss` (SA-PINN) weights and gradient reversal
 - Gradient flow: all loss terms produce non-None `.grad` on network parameters
+
+### `test_interpolant.py`
+
+Covers `src/hemodyn_pinn/pinn/interpolant.py` (dense MRI interpolant prior).
+
+- `build_velocity_interpolant` (rbf / linear) reproduces the sample voxels and returns finite values at arbitrary queries
+- `dense_aux_targets` injects zero velocity at the wall and fills out-of-hull queries (no NaNs)
+- Unknown method raises `ValueError`
+
+### `test_trainer.py`
+
+Covers `src/hemodyn_pinn/pinn/trainer.py` init and curriculum.
+
+- Architecture flags: wall-bias subset, hard-SDF precompute, vec-potential `skip_div`, SA-PINN init
+- `TestCurriculumAux`: `target_rms` precompute, aux flags, decay schedule (`lambda_aux` → 0), warm-up zeroes physics, short `run_adam` completes
+
+### `test_bhpo.py`
+
+Covers `src/hemodyn_pinn/bhpo/` (space, objective, search) — 11-dim search decode/suggest, val-split, a short trial smoke, and **trial-failure robustness**: OOM is retried with smaller chunks (`status=ok`), persistent OOM / genuine errors are classified and recorded (`status=oom`/`error`) rather than silently abandoned, and the trial log writes a `status` column.
+
+### `test_inference.py` (batched WSS)
+
+Beyond the WSS-autograd checks: `compute_wss_batched` is bit-equivalent to the unbatched path, processes all wall faces, halves the batch and recovers on a simulated OOM, and re-raises only below the batch floor; `_is_oom_error` classifies CUDA/MPS OOM vs other errors.
 
 ### `test_inference.py` *(required by Phase 1.5)*
 

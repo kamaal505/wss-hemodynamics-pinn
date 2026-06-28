@@ -10,6 +10,12 @@ Numbered pipeline entry points. Run them in order. Each script is a self-contain
 | `02_run_cfd.py` | ✗ (needs FEniCSx) | ✓ | ✓ |
 | `03_generate_synthetic_mri.py` | ✓ | ✓ | ✓ |
 | `04_train_pinn.py` | ✓ | ✓ | ✓ |
+| `04b_bhpo_search.py` | ✓ | ✓ | ✓ |
+| `04c_train_pinn_with_bhpo.py` | ✓ | ✓ | ✓ |
+| `05_evaluate.py` | ✓ | ✓ | ✓ |
+| `06_run_sweep.py` | ✓ | ✓ | ✓ |
+| `07_make_all_figures.py` | ✓ | ✓ | ✓ |
+| `00_diagnose_collapse.py` | ✓ | ✓ | ✓ |
 
 ---
 
@@ -123,7 +129,7 @@ python scripts/03_generate_synthetic_mri.py --multirun \
 
 ## 04_train_pinn.py
 
-**What it does:** Trains the physics-informed neural network on one case. Loads the CFD solution (for WSS ground-truth validation only) and the synthetic MRI observations (as training signal). Runs Adam optimisation followed by L-BFGS fine-tuning. Saves checkpoints and the best model.
+**What it does:** Trains the physics-informed neural network on one case with fixed hyperparameters. Loads the CFD solution (for WSS ground-truth validation only) and the synthetic MRI observations (training signal). Builds a dense interpolant prior from the MRI voxels, then runs a curriculum warm-up → Adam → L-BFGS schedule with the anti-collapse loss recipe (relative data loss, inflow constraint, decaying interpolant prior, magnitude floor; hard-SDF no-slip). Saves checkpoints and the best model (selected by observation misfit).
 
 **Requires:**
 - `data/cfd/<case_id>/solution.npz` (from `02_run_cfd.py`)
@@ -151,9 +157,9 @@ python scripts/04_train_pinn.py geometry=caseC training.device=cuda
 # Short test run (reduced Adam iterations)
 python scripts/04_train_pinn.py geometry=caseC training.n_adam=5000 training.n_lbfgs=500
 
-# Override loss weights
+# Ablate the anti-collapse recipe (interpolant prior / warm-up / magnitude floor off)
 python scripts/04_train_pinn.py geometry=caseC \
-    training.lambda_phys=10.0 training.lambda_bc=100.0
+    training.lambda_aux=0.0 training.n_warmup=0 training.lambda_mag_floor=0.0
 
 # Multiple cases (sequential multirun)
 python scripts/04_train_pinn.py --multirun geometry=caseA,caseB,caseC,caseR
@@ -170,14 +176,43 @@ python scripts/04_train_pinn.py geometry=caseC model=pinn_rff \
 
 ---
 
-## Planned scripts (not yet implemented)
+## 04b_bhpo_search.py
 
-These scripts are listed in the project plan and will be added in later phases:
+**What it does:** Bayesian hyperparameter optimisation (Optuna TPE) on **caseC** (the reference geometry). Trains a short PINN per trial with the anti-collapse recipe and minimises WSS NRMSE on 20% held-out wall faces.
 
-| Script | Phase | Purpose |
-|--------|-------|---------|
-| `05_evaluate.py` | 2 | Compute WSS metrics (NRMSE, R², Bland–Altman) vs CFD ground truth |
-| `06_run_sweep.py` | 2 | Automated parameter sweep over voxel size × noise level |
-| `07_make_all_figures.py` | 4 | Batch figure generation for all paper figures |
-| `04b_bhpo_search.py` | 3 | Bayesian hyperparameter optimisation search |
-| `04c_train_pinn_with_bhpo.py` | 3 | Retrain PINN at BHPO-optimal hyperparameters |
+**Requires:** `data/cfd/caseC/solution.npz`, `data/synthetic_mri/caseC/voxel_*/mri_obs.npz`.
+
+**Output:** `data/bhpo_runs/caseC/` — `best_params.json`, `trial_log.csv`, `optuna_study.db`.
+
+```bash
+python scripts/04b_bhpo_search.py geometry=caseC
+python scripts/04b_bhpo_search.py geometry=caseC bhpo.n_calls=30 bhpo.device=mps
+```
+
+## 04c_train_pinn_with_bhpo.py
+
+**What it does:** Retrains the PINN at full budget using the BHPO-winning hyperparameters (read from `data/bhpo_runs/<bhpo.source_case_id>/`). Can be applied to any geometry.
+
+**Output:** `data/checkpoints/<case_id>_<voxel_tag>_bhpo/` — checkpoints, `best_model.pt`, `bhpo_params.json` (provenance for `05_evaluate.py`).
+
+```bash
+python scripts/04c_train_pinn_with_bhpo.py geometry=caseC
+python scripts/04c_train_pinn_with_bhpo.py geometry=caseA   # reuses caseC's BHPO result
+```
+
+## 00_diagnose_collapse.py
+
+**What it does:** Loads a trained checkpoint and reports the predicted/CFD velocity-magnitude ratio, WSS-magnitude ratio, WSS NRMSE, and every per-term loss, ending with a `HEALTHY`/`COLLAPSED` verdict. Run it before and after any training change to confirm the field has not collapsed to the trivial Stokes solution.
+
+```bash
+python scripts/00_diagnose_collapse.py geometry=caseC eval.run_suffix=adam50000 model=pinn_base
+python scripts/00_diagnose_collapse.py geometry=caseC        # BHPO-retrained run (default suffix)
+```
+
+## 05_evaluate.py · 06_run_sweep.py · 07_make_all_figures.py
+
+| Script | Purpose |
+|--------|---------|
+| `05_evaluate.py` | WSS metrics (NRMSE, R², Bland–Altman, conservation) vs CFD ground truth → `data/results/` |
+| `06_run_sweep.py` | Discover all checkpoints → `sweep_results.csv` |
+| `07_make_all_figures.py` | Batch-generate all paper figures → `paper/figures/` |

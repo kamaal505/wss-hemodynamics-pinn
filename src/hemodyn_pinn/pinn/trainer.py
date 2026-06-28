@@ -103,6 +103,16 @@ class PINNConfig:
     # Magnitude-collapse fixes
     relative_data: bool = True
     lambda_inlet: float = 0.0
+    # Dense-interpolant supervision + curriculum (anti-collapse, Fixes J–L)
+    lambda_aux: float = 0.0
+    aux_decay_frac: float = 0.5
+    lambda_mag_floor: float = 0.0
+    n_warmup: int = 0
+    interp_method: str = "rbf"
+    # Aux points evaluated per epoch.  The dense prior can have ~10^5 points;
+    # forwarding all of them every step is wasteful and a memory risk, so a
+    # fresh random subset of this size is streamed each epoch (0 = use all).
+    n_aux: int = 4096
 
 
 class PINNTrainer:
@@ -132,6 +142,11 @@ class PINNTrainer:
     x_inlet_nondim, u_inlet_nondim:
         (K, 3) non-dim inlet-plane coordinates and target velocities for the
         inflow magnitude constraint.  Active only when cfg.lambda_inlet > 0.
+    x_aux_nondim, u_aux_nondim:
+        (A, 3) dense interpolant target coordinates and velocities for the
+        anti-collapse supervision (Fixes J–L).  Active only when
+        cfg.lambda_aux > 0; weighted by a decaying schedule (see _aux_weight)
+        and the curriculum warm-up (cfg.n_warmup).
     """
 
     def __init__(
@@ -147,6 +162,8 @@ class PINNTrainer:
         out_dir: Optional[pathlib.Path | str] = None,
         x_inlet_nondim: Optional[np.ndarray] = None,
         u_inlet_nondim: Optional[np.ndarray] = None,
+        x_aux_nondim: Optional[np.ndarray] = None,
+        u_aux_nondim: Optional[np.ndarray] = None,
     ) -> None:
         self.net = net
         self.cfg = cfg
@@ -174,6 +191,24 @@ class PINNTrainer:
             self.x_inlet = _t(x_inlet_nondim)
             self.u_inlet = _t(u_inlet_nondim)
             self._x_inlet_np = x_inlet_nondim
+
+        # Dense interpolant aux targets (anti-collapse, Fixes J–L)
+        self.x_aux: Optional[Tensor] = None
+        self.u_aux: Optional[Tensor] = None
+        self._x_aux_np: Optional[np.ndarray] = None
+        if (
+            x_aux_nondim is not None
+            and u_aux_nondim is not None
+            and x_aux_nondim.shape[0] > 0
+        ):
+            self.x_aux = _t(x_aux_nondim)
+            self.u_aux = _t(u_aux_nondim)
+            self._x_aux_np = x_aux_nondim
+
+        # RMS of observed velocity → target for the magnitude-floor penalty
+        self._target_rms = float(
+            np.sqrt(np.mean(np.sum(u_obs_nondim ** 2, axis=1)))
+        )
 
         self._interior_np = interior_pts_nondim
         self._wall_np = wall_pts_nondim
@@ -203,6 +238,7 @@ class PINNTrainer:
         self._sdf_interior: Optional[Tensor] = None
         self._sdf_data: Optional[Tensor] = None
         self._sdf_inlet: Optional[Tensor] = None
+        self._sdf_aux: Optional[Tensor] = None
 
         if cfg.use_hard_sdf:
             if wall_pts_m is None:
@@ -231,6 +267,13 @@ class PINNTrainer:
                 self._sdf_inlet = torch.tensor(
                     inlet_sdf, dtype=torch.float32, device=self.device
                 )
+
+            # Dense aux target points
+            if self._x_aux_np is not None:
+                aux_sdf = sdf_fn.nondim(self._x_aux_np, L_SCALE)
+                self._sdf_aux = torch.tensor(
+                    aux_sdf, dtype=torch.float32, device=self.device
+                )
             log.info(
                 "SDF pre-computed.  Interior min/mean/max: %.4f / %.4f / %.4f (nondim)",
                 float(interior_sdf.min()),
@@ -245,6 +288,8 @@ class PINNTrainer:
         effective_lambda_bc = 0.0 if cfg.use_hard_sdf else cfg.lambda_bc
 
         self._use_inlet = self.x_inlet is not None and cfg.lambda_inlet > 0.0
+        self._use_aux = self.x_aux is not None and cfg.lambda_aux > 0.0
+        self._use_mag_floor = cfg.lambda_mag_floor > 0.0
 
         if cfg.use_adaptive_weights:
             sa_init = {
@@ -311,15 +356,58 @@ class PINNTrainer:
 
         return x_c, x_w, sdf_c
 
+    def _aux_batch(
+        self, epoch: int
+    ) -> Optional[tuple[Tensor, Tensor, Optional[Tensor]]]:
+        """Return a fresh random subset of the dense aux targets for this epoch.
+
+        Streaming a manageable subset each epoch (``cfg.n_aux``) keeps the
+        per-step forward pass bounded even when the dense interpolant prior has
+        ~10^5 points; ``n_aux <= 0`` or larger than the pool uses all points.
+        """
+        if not self._use_aux or self.x_aux is None:
+            return None
+        total = int(self.x_aux.shape[0])
+        n = self.cfg.n_aux
+        if n <= 0 or n >= total:
+            return self.x_aux, self.u_aux, self._sdf_aux
+        rng = epoch_rng(self.cfg.colloc_seed + 100_003, epoch)
+        idx = torch.as_tensor(
+            rng.choice(total, size=n, replace=False), device=self.device
+        )
+        sdf = self._sdf_aux[idx] if self._sdf_aux is not None else None
+        return self.x_aux[idx], self.u_aux[idx], sdf
+
     def _compute_loss(
-        self, x_colloc: Tensor, x_wall: Tensor, sdf_colloc: Optional[Tensor]
+        self,
+        x_colloc: Tensor,
+        x_wall: Tensor,
+        sdf_colloc: Optional[Tensor],
+        lambda_phys_eff: Optional[float] = None,
+        aux_weight: Optional[float] = None,
+        aux_batch: Optional[tuple[Tensor, Tensor, Optional[Tensor]]] = None,
     ) -> tuple[Tensor, dict[str, float]]:
+        """Compute the combined loss.
+
+        ``lambda_phys_eff`` overrides the physics weight for this step (0 during
+        the curriculum warm-up).  ``aux_weight`` is the decayed dense-interpolant
+        weight for this step.  ``aux_batch`` is the per-epoch ``(x, u, sdf)``
+        subset of the dense prior; when None the full pool is used (back-compat).
+        All default to the static config values.
+        """
         cfg = self.cfg
+        lam_phys = cfg.lambda_phys if lambda_phys_eff is None else lambda_phys_eff
+        lam_aux = (cfg.lambda_aux if aux_weight is None else aux_weight) if self._use_aux else 0.0
+        if aux_batch is None and self._use_aux:
+            aux_batch = (self.x_aux, self.u_aux, self._sdf_aux)
+        x_aux_b, u_aux_b, sdf_aux_b = aux_batch if aux_batch is not None else (None, None, None)
 
         if self._sa_loss is not None:
             from hemodyn_pinn.pinn.losses import (
                 data_loss as _dl,
                 inlet_loss as _il,
+                aux_data_loss as _aux,
+                magnitude_floor_loss as _mag,
                 stokes_residual_loss as _pl,
                 bc_loss as _bc,
                 pressure_anchor_loss as _al,
@@ -331,7 +419,12 @@ class PINNTrainer:
             L_bc     = _bc(self.net, x_wall)
             L_anchor = _al(self.net, self.anchor_pt)
 
-            sa_terms = {"data": L_data, "phys": L_phys, "bc": L_bc, "anchor": L_anchor}
+            # Curriculum: scale the physics term down (to 0 during warm-up).
+            phys_scale = lam_phys / cfg.lambda_phys if cfg.lambda_phys > 0 else 0.0
+            sa_terms = {
+                "data": L_data, "phys": L_phys * phys_scale,
+                "bc": L_bc, "anchor": L_anchor,
+            }
             L_inlet = None
             if self._use_inlet:
                 L_inlet = _il(self.net, self.x_inlet, self.u_inlet,
@@ -339,6 +432,19 @@ class PINNTrainer:
                 sa_terms["inlet"] = L_inlet
 
             total = self._sa_loss(sa_terms)
+
+            # Aux + magnitude floor are fixed-weight curriculum/regularisers,
+            # kept outside the self-adaptive balancing.
+            L_aux = torch.zeros((), device=x_colloc.device, dtype=x_colloc.dtype)
+            if self._use_aux and lam_aux > 0.0:
+                L_aux = _aux(self.net, x_aux_b, u_aux_b,
+                             sdf_vals=sdf_aux_b, relative=cfg.relative_data)
+                total = total + lam_aux * L_aux
+            L_mag = torch.zeros((), device=x_colloc.device, dtype=x_colloc.dtype)
+            if self._use_mag_floor:
+                L_mag = _mag(self.net, x_colloc, self._target_rms, sdf_vals=sdf_colloc)
+                total = total + cfg.lambda_mag_floor * L_mag
+
             lam = self._sa_loss.lambdas
             breakdown = {
                 "loss_data":      float(L_data.detach()),
@@ -346,6 +452,8 @@ class PINNTrainer:
                 "loss_bc":        float(L_bc.detach()),
                 "loss_anchor":    float(L_anchor.detach()),
                 "loss_inlet":     float(L_inlet.detach()) if L_inlet is not None else 0.0,
+                "loss_aux":       float(L_aux.detach()),
+                "loss_mag_floor": float(L_mag.detach()),
                 "loss_total":     float(total.detach()),
                 "lambda_data":    lam["data"],
                 "lambda_phys":    lam["phys"],
@@ -361,7 +469,7 @@ class PINNTrainer:
                 x_wall=x_wall,
                 x_anchor=self.anchor_pt,
                 lambda_data=cfg.lambda_data,
-                lambda_phys=cfg.lambda_phys,
+                lambda_phys=lam_phys,
                 lambda_bc=self._effective_lambda_bc,
                 lambda_anchor=cfg.lambda_anchor,
                 sdf_data=self._sdf_data,
@@ -372,6 +480,12 @@ class PINNTrainer:
                 u_inlet=self.u_inlet if self._use_inlet else None,
                 sdf_inlet=self._sdf_inlet,
                 lambda_inlet=cfg.lambda_inlet,
+                x_aux=x_aux_b if self._use_aux else None,
+                u_aux=u_aux_b if self._use_aux else None,
+                sdf_aux=sdf_aux_b,
+                lambda_aux=lam_aux,
+                target_rms=self._target_rms if self._use_mag_floor else None,
+                lambda_mag_floor=cfg.lambda_mag_floor,
             )
         return total, breakdown
 
@@ -384,6 +498,22 @@ class PINNTrainer:
             state["sa_loss_state"] = self._sa_loss.state_dict()
         torch.save(state, path)
         log.debug("Checkpoint saved: %s", path)
+
+    def _aux_weight(self, epoch: int) -> float:
+        """Decayed dense-interpolant weight for the given Adam epoch.
+
+        Linearly ramps lambda_aux → 0 over the first ``aux_decay_frac`` of the
+        Adam phase, so the dense prior dominates early (preventing collapse) and
+        vanishes as the physics residual takes over.
+        """
+        cfg = self.cfg
+        if not self._use_aux:
+            return 0.0
+        if cfg.aux_decay_frac <= 0.0:
+            return cfg.lambda_aux
+        span = max(1.0, cfg.aux_decay_frac * cfg.n_adam)
+        frac = max(0.0, 1.0 - epoch / span)
+        return cfg.lambda_aux * frac
 
     def _selection_metric(self, breakdown: dict) -> float:
         """Metric used to pick the best checkpoint.
@@ -444,8 +574,17 @@ class PINNTrainer:
         for epoch in range(cfg.n_adam):
             x_c, x_w, sdf_c = self._sample_batch(epoch)
 
+            lambda_phys_eff = 0.0 if epoch < cfg.n_warmup else cfg.lambda_phys
+            aux_weight = self._aux_weight(epoch)
+            aux_batch = self._aux_batch(epoch)
+
             optimizer.zero_grad()
-            loss, breakdown = self._compute_loss(x_c, x_w, sdf_c)
+            loss, breakdown = self._compute_loss(
+                x_c, x_w, sdf_c,
+                lambda_phys_eff=lambda_phys_eff,
+                aux_weight=aux_weight,
+                aux_batch=aux_batch,
+            )
             loss.backward()
 
             # Fix D: reverse gradients on SA weight params so they are maximised
@@ -505,9 +644,17 @@ class PINNTrainer:
         self.net.train()
         lbfgs_iter = [0]
 
+        aux_weight_final = self._aux_weight(cfg.n_adam)
+        aux_batch_final = self._aux_batch(cfg.n_adam)
+
         def closure() -> Tensor:
             optimizer.zero_grad()
-            loss, breakdown = self._compute_loss(x_c, x_w, sdf_c)
+            loss, breakdown = self._compute_loss(
+                x_c, x_w, sdf_c,
+                lambda_phys_eff=cfg.lambda_phys,
+                aux_weight=aux_weight_final,
+                aux_batch=aux_batch_final,
+            )
             loss.backward()
             breakdown["epoch"] = cfg.n_adam + lbfgs_iter[0]
             breakdown["phase"] = "lbfgs"

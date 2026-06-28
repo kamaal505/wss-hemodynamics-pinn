@@ -128,6 +128,23 @@ def main(cfg: DictConfig) -> None:
     u_inlet_nondim = to_nondim_velocity(u_inlet_ms)
     log.info("Inlet targets (%s): %d points", inlet_source, x_inlet_nondim.shape[0])
 
+    # ── Dense interpolant supervision (anti-collapse, Fixes J–L) ──────────────
+    from hemodyn_pinn.pinn.interpolant import (
+        build_velocity_interpolant,
+        dense_aux_targets,
+    )
+    lambda_aux = float(cfg.training.get("lambda_aux", 0.0))
+    if lambda_aux > 0.0:
+        interp = build_velocity_interpolant(
+            x_data_nondim, u_obs_nondim,
+            method=str(cfg.training.get("interp_method", "rbf")),
+        )
+        x_aux_nondim, u_aux_nondim = dense_aux_targets(
+            interp, interior_pts_nondim, wall_pts_nondim
+        )
+    else:
+        x_aux_nondim = u_aux_nondim = None
+
     # ── Build network ────────────────────────────────────────────────────────
     net = PINNNetwork(
         n_hidden=cfg.model.n_hidden,
@@ -168,6 +185,12 @@ def main(cfg: DictConfig) -> None:
         sa_weight_lr=float(cfg.training.sa_weight_lr),
         relative_data=bool(cfg.training.get("relative_data", True)),
         lambda_inlet=float(cfg.training.get("lambda_inlet", 0.0)),
+        lambda_aux=lambda_aux,
+        aux_decay_frac=float(cfg.training.get("aux_decay_frac", 0.5)),
+        lambda_mag_floor=float(cfg.training.get("lambda_mag_floor", 0.0)),
+        n_warmup=int(cfg.training.get("n_warmup", 0)),
+        interp_method=str(cfg.training.get("interp_method", "rbf")),
+        n_aux=int(cfg.training.get("n_aux", 4096)),
     )
 
     run_id = f"{case_id}_{voxel_tag}_adam{cfg.training.n_adam}"
@@ -185,6 +208,8 @@ def main(cfg: DictConfig) -> None:
         out_dir=out_dir,
         x_inlet_nondim=x_inlet_nondim,
         u_inlet_nondim=u_inlet_nondim,
+        x_aux_nondim=x_aux_nondim,
+        u_aux_nondim=u_aux_nondim,
     )
 
     # ── Train ────────────────────────────────────────────────────────────────

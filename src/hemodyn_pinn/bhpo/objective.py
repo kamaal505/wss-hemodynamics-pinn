@@ -27,7 +27,11 @@ import numpy as np
 import torch
 
 from hemodyn_pinn.bhpo.space import decode_params, optuna_suggest
-from hemodyn_pinn.pinn.inference import compute_wss_auto
+from hemodyn_pinn.pinn.inference import (
+    _free_memory,
+    _is_oom_error,
+    compute_wss_batched,
+)
 from hemodyn_pinn.pinn.networks import PINNNetwork
 from hemodyn_pinn.pinn.trainer import PINNConfig, PINNTrainer
 from hemodyn_pinn.utils.seeds import BHPO_VAL_SEED
@@ -40,7 +44,7 @@ log = logging.getLogger(__name__)
 _FAILURE_PENALTY: float = 2.0
 
 _LOG_COLUMNS = [
-    "trial_id", "wss_nrmse", "elapsed_s", "timestamp",
+    "trial_id", "wss_nrmse", "status", "elapsed_s", "timestamp",
     "lambda_data", "lambda_phys", "lambda_bc", "n_layers", "n_hidden",
     "activation", "use_rff", "rff_sigma", "lr_adam",
     "n_colloc", "wall_bias_frac",
@@ -111,6 +115,14 @@ class BHPOObjective:
         u_inlet_nondim: Optional[np.ndarray] = None,
         lambda_inlet: float = 0.0,
         relative_data: bool = True,
+        x_aux_nondim: Optional[np.ndarray] = None,
+        u_aux_nondim: Optional[np.ndarray] = None,
+        lambda_aux: float = 0.0,
+        aux_decay_frac: float = 0.5,
+        lambda_mag_floor: float = 0.0,
+        n_warmup: int = 0,
+        n_aux: int = 4096,
+        wss_batch_size: int = 4096,
     ) -> None:
         from hemodyn_pinn.bhpo.search import auto_device
         self.device = auto_device() if device == "auto" else device
@@ -121,6 +133,20 @@ class BHPOObjective:
         self._u_inlet = u_inlet_nondim
         self.lambda_inlet = lambda_inlet
         self.relative_data = relative_data
+
+        # Dense interpolant supervision + curriculum (anti-collapse, Fixes J–L)
+        self._x_aux = x_aux_nondim
+        self._u_aux = u_aux_nondim
+        self.lambda_aux = lambda_aux
+        self.aux_decay_frac = aux_decay_frac
+        self.lambda_mag_floor = lambda_mag_floor
+        self.n_warmup = n_warmup
+        self.n_aux = n_aux
+        self.wss_batch_size = wss_batch_size
+
+        # Failure bookkeeping so dropped trials are visible, never silent.
+        self.n_oom_trials = 0
+        self.n_error_trials = 0
 
         # Architecture flags fixed for this search run
         self.use_hard_sdf = use_hard_sdf
@@ -180,22 +206,60 @@ class BHPOObjective:
         hp = optuna_suggest(trial)
 
         t0 = time.perf_counter()
-        try:
-            nrmse = self._run_trial(hp)
-        except Exception as exc:
-            log.warning("Trial %d failed: %s", trial_id, exc, exc_info=True)
-            nrmse = _FAILURE_PENALTY
+        nrmse, status = self._safe_run_trial(hp, trial_id)
         elapsed = time.perf_counter() - t0
 
         log.info(
-            "Trial %3d | WSS-NRMSE=%.4f | %.0f s | "
+            "Trial %3d | WSS-NRMSE=%.4f [%s] | %.0f s | "
             "λ_phys=%.3g λ_bc=%.3g act=%s rff=%s lr=%.2e n_c=%d bias=%.2f",
-            trial_id, nrmse, elapsed,
+            trial_id, nrmse, status, elapsed,
             hp["lambda_phys"], hp["lambda_bc"], hp["activation"],
             hp["use_rff"], hp["lr_adam"], hp["n_colloc"], hp["wall_bias_frac"],
         )
-        self._log_trial(trial_id, hp, nrmse, elapsed)
+        self._log_trial(trial_id, hp, nrmse, elapsed, status)
         return nrmse
+
+    # ------------------------------------------------------------------
+    # OOM-aware trial wrapper (never silently abandons a configuration)
+    # ------------------------------------------------------------------
+
+    def _safe_run_trial(self, hp: dict, trial_id: int) -> tuple[float, str]:
+        """Run one trial, retrying on OOM with smaller chunks before giving up.
+
+        Returns ``(nrmse, status)`` with status in {"ok", "oom", "error"}.  An
+        out-of-memory failure does not immediately discard the configuration:
+        the per-epoch auxiliary subset and the WSS-eval batch are shrunk and the
+        trial is retried, so "difficult" data is streamed in smaller pieces
+        rather than abandoned.  Only a persistent OOM or a genuine error falls
+        back to the failure penalty, and that fact is recorded in the trial log.
+        """
+        device = torch.device(self.device)
+        saved_n_aux, saved_wss_bs = self.n_aux, self.wss_batch_size
+        try:
+            for attempt in range(3):
+                try:
+                    return float(self._run_trial(hp)), "ok"
+                except (RuntimeError, MemoryError) as exc:
+                    if not _is_oom_error(exc):
+                        raise
+                    _free_memory(device)
+                    self.n_aux = max(256, self.n_aux // 2)
+                    self.wss_batch_size = max(64, self.wss_batch_size // 2)
+                    log.warning(
+                        "Trial %d hit OOM (attempt %d/3); retrying with "
+                        "n_aux=%d wss_batch_size=%d",
+                        trial_id, attempt + 1, self.n_aux, self.wss_batch_size,
+                    )
+            self.n_oom_trials += 1
+            log.error("Trial %d abandoned after repeated OOM.", trial_id)
+            return _FAILURE_PENALTY, "oom"
+        except Exception as exc:
+            self.n_error_trials += 1
+            log.warning("Trial %d failed: %s", trial_id, exc, exc_info=True)
+            return _FAILURE_PENALTY, "error"
+        finally:
+            self.n_aux, self.wss_batch_size = saved_n_aux, saved_wss_bs
+            _free_memory(device)
 
     # ------------------------------------------------------------------
     # Legacy skopt interface (fallback)
@@ -208,21 +272,17 @@ class BHPOObjective:
         hp = decode_params(params)
 
         t0 = time.perf_counter()
-        try:
-            nrmse = self._run_trial(hp)
-        except Exception as exc:
-            log.warning("Trial %d failed: %s", trial_id, exc, exc_info=True)
-            nrmse = _FAILURE_PENALTY
+        nrmse, status = self._safe_run_trial(hp, trial_id)
         elapsed = time.perf_counter() - t0
 
         log.info(
-            "Trial %3d | WSS-NRMSE=%.4f | %.0f s | "
+            "Trial %3d | WSS-NRMSE=%.4f [%s] | %.0f s | "
             "λ_phys=%.3g λ_bc=%.3g act=%s rff=%s lr=%.2e n_c=%d bias=%.2f",
-            trial_id, nrmse, elapsed,
+            trial_id, nrmse, status, elapsed,
             hp["lambda_phys"], hp["lambda_bc"], hp["activation"],
             hp["use_rff"], hp["lr_adam"], hp["n_colloc"], hp["wall_bias_frac"],
         )
-        self._log_trial(trial_id, hp, nrmse, elapsed)
+        self._log_trial(trial_id, hp, nrmse, elapsed, status)
         return nrmse
 
     # ------------------------------------------------------------------
@@ -259,6 +319,11 @@ class BHPOObjective:
             use_adaptive_weights=self.use_adaptive_weights,
             relative_data=self.relative_data,
             lambda_inlet=self.lambda_inlet,
+            lambda_aux=self.lambda_aux,
+            aux_decay_frac=self.aux_decay_frac,
+            lambda_mag_floor=self.lambda_mag_floor,
+            n_warmup=self.n_warmup,
+            n_aux=self.n_aux,
         )
         trainer = PINNTrainer(
             net=net,
@@ -272,16 +337,21 @@ class BHPOObjective:
             out_dir=None,
             x_inlet_nondim=self._x_inlet,
             u_inlet_nondim=self._u_inlet,
+            x_aux_nondim=self._x_aux,
+            u_aux_nondim=self._u_aux,
         )
         trainer.fit()
 
-        # WSS NRMSE on held-out validation faces
+        # WSS NRMSE on held-out validation faces.  Streamed in memory-bounded
+        # chunks (adaptive on OOM) so a large validation set is never dropped.
         net.eval()
         device = torch.device(self.device)
         x_val = torch.tensor(self._val_wall_pts, dtype=torch.float32, device=device)
         n_val = torch.tensor(self._val_normals,  dtype=torch.float32, device=device)
 
-        _, pinn_wss = compute_wss_auto(net, x_val, n_val)
+        _, pinn_wss = compute_wss_batched(
+            net, x_val, n_val, batch_size=self.wss_batch_size
+        )
         pinn_wss_np = pinn_wss.detach().cpu().numpy()
 
         diff = pinn_wss_np - self._val_cfd_wss
@@ -289,12 +359,9 @@ class BHPOObjective:
         nrmse = float(np.sqrt(np.mean(diff ** 2))) / (rms_cfd + 1e-12)
 
         del net, trainer, pinn_wss, x_val, n_val
-        # Explicit cache clear helps on MPS between trials
-        if self.device == "mps":
-            try:
-                torch.mps.empty_cache()
-            except Exception:
-                pass
+        # Release allocator memory so it does not accumulate across trials
+        # (CUDA and MPS both fragment over a 60-trial search).
+        _free_memory(device)
 
         return nrmse if np.isfinite(nrmse) else _FAILURE_PENALTY
 
@@ -308,6 +375,7 @@ class BHPOObjective:
         hp: dict,
         nrmse: float,
         elapsed: float,
+        status: str = "ok",
     ) -> None:
         if self._trial_log_path is None:
             return
@@ -317,12 +385,15 @@ class BHPOObjective:
         row = {
             "trial_id":  trial_id,
             "wss_nrmse": round(nrmse, 6),
+            "status":    status,
             "elapsed_s": round(elapsed, 1),
             "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
             **hp,
         }
+        # extrasaction="ignore": tolerate HP keys not in the column set so a
+        # future search dimension cannot crash the logger mid-search.
         with open(self._trial_log_path, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=_LOG_COLUMNS)
+            writer = csv.DictWriter(f, fieldnames=_LOG_COLUMNS, extrasaction="ignore")
             if write_header:
                 writer.writeheader()
             writer.writerow(row)

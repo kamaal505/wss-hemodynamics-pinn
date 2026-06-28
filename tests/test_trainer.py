@@ -228,3 +228,113 @@ class TestAdaptiveWeightsInit:
             u_obs_nondim=u_obs, wall_pts_m=wall_m,
         )
         assert trainer._sa_loss.lambdas["bc"] == pytest.approx(0.0, abs=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# Fixes J–L — curriculum warm-up + decaying dense-interpolant aux weight
+# ---------------------------------------------------------------------------
+
+
+def _make_aux(n_aux: int = 80, seed: int = 1):
+    rng = np.random.default_rng(seed)
+    x_aux = rng.uniform(0.1, 0.9, (n_aux, 3)).astype(np.float32)
+    u_aux = rng.normal(0, 1e-4, (n_aux, 3)).astype(np.float32)
+    return x_aux, u_aux
+
+
+class TestCurriculumAux:
+    def test_target_rms_precomputed(self) -> None:
+        cfg = PINNConfig()
+        trainer = _make_trainer(cfg)
+        _, _, _, _, u_obs, _ = _make_data()
+        expected = float(np.sqrt(np.mean(np.sum(u_obs ** 2, axis=1))))
+        assert trainer._target_rms == pytest.approx(expected, rel=1e-5)
+
+    def test_aux_flags_and_tensors(self) -> None:
+        x_aux, u_aux = _make_aux()
+        cfg = PINNConfig(lambda_aux=5.0, lambda_mag_floor=1.0)
+        trainer = _make_trainer(cfg, x_aux_nondim=x_aux, u_aux_nondim=u_aux)
+        assert trainer._use_aux is True
+        assert trainer._use_mag_floor is True
+        assert trainer.x_aux is not None and trainer.x_aux.shape == (80, 3)
+
+    def test_aux_disabled_when_weight_zero(self) -> None:
+        x_aux, u_aux = _make_aux()
+        cfg = PINNConfig(lambda_aux=0.0)
+        trainer = _make_trainer(cfg, x_aux_nondim=x_aux, u_aux_nondim=u_aux)
+        assert trainer._use_aux is False
+
+    def test_aux_weight_decays_to_zero(self) -> None:
+        x_aux, u_aux = _make_aux()
+        cfg = PINNConfig(lambda_aux=5.0, aux_decay_frac=0.5, n_adam=100)
+        trainer = _make_trainer(cfg, x_aux_nondim=x_aux, u_aux_nondim=u_aux)
+        assert trainer._aux_weight(0) == pytest.approx(5.0, rel=1e-6)
+        assert trainer._aux_weight(25) == pytest.approx(2.5, rel=1e-3)
+        assert trainer._aux_weight(50) == pytest.approx(0.0, abs=1e-6)
+        assert trainer._aux_weight(100) == pytest.approx(0.0, abs=1e-6)
+
+    def test_warmup_zeroes_physics(self) -> None:
+        """During warm-up the physics term must not contribute to the total.
+
+        Aux/mag-floor are disabled here so the physics contribution is not
+        swamped by the (relative) aux loss on the tiny synthetic velocities.
+        """
+        interior, wall, anchor, x_data, u_obs, wall_m = _make_data()
+        net = PINNNetwork(n_hidden=8, n_layers=2, seed=0)
+        # Isolate physics (zero the other terms) so the warm-up effect is exact
+        # and not lost to float32 cancellation against a huge relative data loss.
+        cfg = PINNConfig(n_adam=4, n_lbfgs=0, n_warmup=2,
+                         lambda_data=0.0, lambda_phys=1.0, lambda_bc=0.0,
+                         lambda_anchor=0.0, lambda_aux=0.0, lambda_mag_floor=0.0)
+        trainer = PINNTrainer(
+            net=net, cfg=cfg,
+            interior_pts_nondim=interior, wall_pts_nondim=wall,
+            anchor_pt_nondim=anchor, x_data=x_data, u_obs_nondim=u_obs,
+        )
+        x_c, x_w, sdf_c = trainer._sample_batch(0)
+        total_warm, bd = trainer._compute_loss(x_c, x_w, sdf_c, lambda_phys_eff=0.0)
+        total_phys, _ = trainer._compute_loss(x_c, x_w, sdf_c, lambda_phys_eff=1.0)
+        # Physics off ⇒ total is ~0; physics on ⇒ total = loss_phys > 0.
+        assert float(total_warm.detach()) == pytest.approx(0.0, abs=1e-6)
+        assert float(total_phys.detach()) > 0.0
+        assert "loss_aux" in bd and "loss_mag_floor" in bd
+
+    def test_aux_batch_streams_subset(self) -> None:
+        """Per-epoch aux batch is capped at n_aux and varies across epochs."""
+        x_aux, u_aux = _make_aux(n_aux=300)
+        cfg = PINNConfig(lambda_aux=5.0, n_aux=64)
+        trainer = _make_trainer(cfg, x_aux_nondim=x_aux, u_aux_nondim=u_aux)
+        b0 = trainer._aux_batch(0)
+        b1 = trainer._aux_batch(1)
+        assert b0 is not None and b0[0].shape == (64, 3)
+        assert b0[1].shape == (64, 3)
+        # different epoch → different subset (resampled)
+        assert not torch.equal(b0[0], b1[0])
+
+    def test_aux_batch_uses_all_when_cap_large(self) -> None:
+        x_aux, u_aux = _make_aux(n_aux=50)
+        cfg = PINNConfig(lambda_aux=5.0, n_aux=0)   # 0 → use all
+        trainer = _make_trainer(cfg, x_aux_nondim=x_aux, u_aux_nondim=u_aux)
+        b = trainer._aux_batch(0)
+        assert b is not None and b[0].shape[0] == 50
+
+    def test_aux_batch_none_when_disabled(self) -> None:
+        cfg = PINNConfig(lambda_aux=0.0, n_aux=64)
+        trainer = _make_trainer(cfg)
+        assert trainer._aux_batch(0) is None
+
+    def test_short_run_completes(self) -> None:
+        x_aux, u_aux = _make_aux()
+        interior, wall, anchor, x_data, u_obs, wall_m = _make_data()
+        net = PINNNetwork(n_hidden=8, n_layers=2, seed=0)
+        cfg = PINNConfig(n_adam=6, n_lbfgs=0, n_warmup=2, checkpoint_every=1000,
+                         lambda_aux=5.0, aux_decay_frac=0.5, lambda_mag_floor=1.0)
+        trainer = PINNTrainer(
+            net=net, cfg=cfg,
+            interior_pts_nondim=interior, wall_pts_nondim=wall,
+            anchor_pt_nondim=anchor, x_data=x_data, u_obs_nondim=u_obs,
+            x_aux_nondim=x_aux, u_aux_nondim=u_aux,
+        )
+        trainer.run_adam()
+        assert len(trainer.history) == 6
+        assert "loss_aux" in trainer.history[0]

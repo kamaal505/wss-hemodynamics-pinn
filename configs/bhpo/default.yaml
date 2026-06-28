@@ -24,8 +24,21 @@ backend: "optuna"
 # Architecture flags fixed for this BHPO run.
 # Change these to search over a different architecture family.
 use_hard_sdf: true
-use_vec_potential: true
+use_vec_potential: false   # demoted; see configs/model/pinn_base.yaml (Fix M)
 use_adaptive_weights: false
+
+# Anti-collapse recipe applied to every trial (Fixes J–L).  Mirrors the
+# training.* defaults so BHPO trials and the final retrain share the recipe.
+lambda_aux: 5.0
+aux_decay_frac: 0.5
+lambda_mag_floor: 1.0
+n_warmup: 1000        # shorter warm-up for the reduced per-trial Adam budget
+interp_method: rbf
+# Memory streaming: dense-prior points evaluated per epoch, and wall faces per
+# WSS-eval chunk.  Both are adaptively halved on OOM rather than abandoning the
+# trial.  Lower these if a trial still OOMs on a small GPU.
+n_aux: 4096
+wss_batch_size: 4096
 
 # ── Retrain settings (04c_train_pinn_with_bhpo.py) ──────────────────────────
 source_case_id: caseC

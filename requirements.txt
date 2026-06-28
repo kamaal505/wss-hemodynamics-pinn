@@ -116,6 +116,12 @@ netcdf4>=1.7               # NetCDF I/O (optional CFD output format)
 
 
 # ---------------------------------------------------------------------------
+# Documentation conversion (one-off; PDF -> Markdown for docs/project_knowledge)
+# ---------------------------------------------------------------------------
+markitdown[pdf]>=0.1.6
+
+
+# ---------------------------------------------------------------------------
 # Notebook / exploration (not required for scripts/)
 # ---------------------------------------------------------------------------
 jupyterlab>=4.2

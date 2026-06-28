@@ -111,6 +111,53 @@ def inlet_loss(
     return mse
 
 
+def aux_data_loss(
+    net: nn.Module,
+    x_aux: Tensor,
+    u_aux: Tensor,
+    sdf_vals: Optional[Tensor] = None,
+    relative: bool = True,
+) -> Tensor:
+    """Supervised misfit to a dense interpolant of the sparse MRI voxels.
+
+    The dense target (see ``pinn.interpolant``) provides a non-zero velocity
+    magnitude at every interior collocation point, so the network cannot
+    collapse to the trivial u ≡ 0 Stokes solution while this term is active.
+    Used as a curriculum warm-up prior and then with a decaying weight as the
+    physics residual takes over.
+
+    Identical in form to ``data_loss``; kept separate so it carries its own
+    (decaying) weight and breakdown entry.
+    """
+    out = net(x_aux, sdf_vals=sdf_vals)
+    u_pred = out[:, :3]
+    mse = ((u_pred - u_aux) ** 2).mean()
+    if relative:
+        return mse / ((u_aux ** 2).mean() + 1e-12)
+    return mse
+
+
+def magnitude_floor_loss(
+    net: nn.Module,
+    x_colloc: Tensor,
+    target_rms: float,
+    sdf_vals: Optional[Tensor] = None,
+) -> Tensor:
+    """One-sided penalty when the predicted velocity RMS falls below a floor.
+
+    ``target_rms`` is the RMS magnitude of the observed (non-dimensional)
+    velocity.  The penalty is ``relu(target_rms − rms(|u_pred|))²`` evaluated
+    over the collocation batch: it is zero once the field magnitude is healthy,
+    so a correctly-scaled solution is never biased, while a collapsing field is
+    pushed back up globally (not just at the sparse data points).
+    """
+    out = net(x_colloc, sdf_vals=sdf_vals)
+    u_pred = out[:, :3]
+    pred_rms = torch.sqrt((u_pred ** 2).sum(dim=1).mean() + 1e-12)
+    deficit = torch.relu(target_rms - pred_rms)
+    return deficit ** 2
+
+
 def stokes_residual_loss(
     net: nn.Module,
     x_colloc: Tensor,
@@ -277,6 +324,12 @@ def total_loss(
     u_inlet: Optional[Tensor] = None,
     sdf_inlet: Optional[Tensor] = None,
     lambda_inlet: float = 0.0,
+    x_aux: Optional[Tensor] = None,
+    u_aux: Optional[Tensor] = None,
+    sdf_aux: Optional[Tensor] = None,
+    lambda_aux: float = 0.0,
+    target_rms: Optional[float] = None,
+    lambda_mag_floor: float = 0.0,
 ) -> tuple[Tensor, dict[str, float]]:
     """Compute the full PINN loss and return a breakdown dict.
 
@@ -309,6 +362,16 @@ def total_loss(
         0 the inlet term is omitted.
     lambda_inlet:
         Weight on the inflow constraint.
+    x_aux, u_aux, sdf_aux:
+        Dense interpolant target coordinates, velocities, and SDF values for
+        the auxiliary anti-collapse supervision.  Omitted when ``x_aux`` is
+        None or ``lambda_aux`` is 0.  ``lambda_aux`` is normally the *decayed*
+        weight supplied by the trainer (it ramps to 0 as physics takes over).
+    lambda_aux:
+        Weight on the dense interpolant term (current, post-decay value).
+    target_rms, lambda_mag_floor:
+        RMS of the observed non-dim velocity and the weight of the one-sided
+        magnitude-floor penalty on the collocation batch.
 
     Returns
     -------
@@ -329,12 +392,28 @@ def total_loss(
     else:
         L_inlet = torch.zeros((), device=x_data.device, dtype=x_data.dtype)
 
+    if x_aux is not None and lambda_aux > 0.0:
+        L_aux = aux_data_loss(
+            net, x_aux, u_aux, sdf_vals=sdf_aux, relative=relative_data
+        )
+    else:
+        L_aux = torch.zeros((), device=x_data.device, dtype=x_data.dtype)
+
+    if target_rms is not None and lambda_mag_floor > 0.0:
+        L_mag = magnitude_floor_loss(
+            net, x_colloc, target_rms, sdf_vals=sdf_colloc
+        )
+    else:
+        L_mag = torch.zeros((), device=x_data.device, dtype=x_data.dtype)
+
     total = (
         lambda_data   * L_data
         + lambda_phys * L_phys
         + lambda_bc   * L_bc
         + lambda_anchor * L_anchor
         + lambda_inlet * L_inlet
+        + lambda_aux  * L_aux
+        + lambda_mag_floor * L_mag
     )
     breakdown = {
         "loss_data":   float(L_data.detach()),
@@ -342,6 +421,8 @@ def total_loss(
         "loss_bc":     float(L_bc.detach()),
         "loss_anchor": float(L_anchor.detach()),
         "loss_inlet":  float(L_inlet.detach()),
+        "loss_aux":    float(L_aux.detach()),
+        "loss_mag_floor": float(L_mag.detach()),
         "loss_total":  float(total.detach()),
     }
     return total, breakdown

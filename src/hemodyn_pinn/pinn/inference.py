@@ -29,11 +29,15 @@ Hard-SDF path (use_hard_sdf=True):
 
 from __future__ import annotations
 
+import logging
+
 import torch
 import torch.nn as nn
 from torch import Tensor
 
 from hemodyn_pinn.pinn.networks import L_SCALE, U_SCALE, MU
+
+log = logging.getLogger(__name__)
 
 
 def compute_velocity_jacobian(
@@ -175,6 +179,96 @@ def compute_wss_auto(
     if use_hard:
         return compute_wss_hard_sdf(net, x_wall_nondim, wall_normals)
     return compute_wss(net, x_wall_nondim, wall_normals)
+
+
+def _is_oom_error(exc: BaseException) -> bool:
+    """True if `exc` looks like an out-of-memory error (CUDA/MPS/CPU)."""
+    if exc.__class__.__name__ == "OutOfMemoryError":
+        return True
+    msg = str(exc).lower()
+    return (
+        "out of memory" in msg
+        or "can't allocate" in msg
+        or "cuda error: out of memory" in msg
+        or "mps backend out of memory" in msg
+    )
+
+
+def compute_wss_batched(
+    net: nn.Module,
+    x_wall_nondim: Tensor,
+    wall_normals: Tensor,
+    batch_size: int = 4096,
+    min_batch_size: int = 64,
+) -> tuple[Tensor, Tensor]:
+    """WSS over many wall points, computed in memory-bounded chunks.
+
+    The standard autograd path forms a per-point velocity Jacobian and holds the
+    graph for three backward passes; doing this for every wall face at once is
+    the dominant out-of-memory risk during evaluation (e.g. inside a BHPO
+    trial).  This wrapper streams the wall points in batches and, if a batch
+    still triggers an OOM, **halves the batch size and retries** down to
+    ``min_batch_size`` rather than abandoning the computation.  No wall face is
+    ever dropped.
+
+    Parameters
+    ----------
+    net:
+        Trained PINNNetwork.
+    x_wall_nondim:
+        (W, 3) non-dimensional wall-centroid coordinates.
+    wall_normals:
+        (W, 3) outward unit normals.
+    batch_size:
+        Initial points per chunk; adaptively reduced on OOM.
+    min_batch_size:
+        Floor below which an OOM is re-raised (genuinely insufficient memory).
+
+    Returns
+    -------
+    tau_pa : Tensor
+        (W, 3) WSS vectors in Pa.
+    tau_mag_pa : Tensor
+        (W,) WSS magnitudes in Pa.
+    """
+    W = x_wall_nondim.shape[0]
+    tau_chunks: list[Tensor] = []
+    mag_chunks: list[Tensor] = []
+
+    start = 0
+    bs = max(min_batch_size, int(batch_size))
+    while start < W:
+        end = min(start + bs, W)
+        xb = x_wall_nondim[start:end]
+        nb = wall_normals[start:end]
+        try:
+            tau_b, mag_b = compute_wss_auto(net, xb, nb)
+            tau_chunks.append(tau_b.detach())
+            mag_chunks.append(mag_b.detach())
+            start = end
+        except (RuntimeError, MemoryError) as exc:
+            if not _is_oom_error(exc) or bs <= min_batch_size:
+                raise
+            _free_memory(x_wall_nondim.device)
+            bs = max(min_batch_size, bs // 2)
+            log.warning(
+                "WSS batch OOM at %d points; retrying with batch_size=%d", end - start, bs
+            )
+
+    return torch.cat(tau_chunks, dim=0), torch.cat(mag_chunks, dim=0)
+
+
+def _free_memory(device: "torch.device") -> None:
+    """Release cached allocator memory for the active accelerator."""
+    import gc
+    gc.collect()
+    try:
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        elif device.type == "mps":
+            torch.mps.empty_cache()
+    except Exception:
+        pass
 
 
 def predict_velocity_field(

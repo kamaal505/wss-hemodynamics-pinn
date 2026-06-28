@@ -118,6 +118,23 @@ def main(cfg: DictConfig) -> None:
     x_inlet_nondim = to_nondim_coords(x_inlet_m)
     u_inlet_nondim = to_nondim_velocity(u_inlet_ms)
 
+    # ── Dense interpolant supervision (anti-collapse, Fixes J–L) ──────────────
+    from hemodyn_pinn.pinn.interpolant import (
+        build_velocity_interpolant,
+        dense_aux_targets,
+    )
+    lambda_aux = float(cfg.bhpo.get("lambda_aux", 0.0))
+    if lambda_aux > 0.0:
+        interp = build_velocity_interpolant(
+            x_data_nondim, u_obs_nondim,
+            method=str(cfg.bhpo.get("interp_method", "rbf")),
+        )
+        x_aux_nondim, u_aux_nondim = dense_aux_targets(
+            interp, interior_pts_nondim, wall_pts_nondim
+        )
+    else:
+        x_aux_nondim = u_aux_nondim = None
+
     log.info(
         "Data summary: %d interior pts | %d wall pts | %d MRI voxels | "
         "%d inlet pts (%s)",
@@ -159,6 +176,14 @@ def main(cfg: DictConfig) -> None:
         u_inlet_nondim=u_inlet_nondim if x_inlet_nondim.shape[0] > 0 else None,
         lambda_inlet=float(cfg.training.get("lambda_inlet", 0.0)),
         relative_data=bool(cfg.training.get("relative_data", True)),
+        x_aux_nondim=x_aux_nondim,
+        u_aux_nondim=u_aux_nondim,
+        lambda_aux=lambda_aux,
+        aux_decay_frac=float(cfg.bhpo.get("aux_decay_frac", 0.5)),
+        lambda_mag_floor=float(cfg.bhpo.get("lambda_mag_floor", 0.0)),
+        n_warmup=int(cfg.bhpo.get("n_warmup", 0)),
+        n_aux=int(cfg.bhpo.get("n_aux", 4096)),
+        wss_batch_size=int(cfg.bhpo.get("wss_batch_size", 4096)),
     )
 
     log.info(
@@ -181,6 +206,12 @@ def main(cfg: DictConfig) -> None:
         "BHPO finished in %.0f s (%.1f s/trial avg).",
         elapsed, elapsed / int(cfg.bhpo.n_calls),
     )
+    if objective.n_oom_trials or objective.n_error_trials:
+        log.warning(
+            "BHPO trial failures: %d OOM (retried then penalised), %d error. "
+            "See status column in %s/trial_log.csv.",
+            objective.n_oom_trials, objective.n_error_trials, out_dir,
+        )
     log.info("Best params saved to %s/best_params.json", out_dir)
 
 

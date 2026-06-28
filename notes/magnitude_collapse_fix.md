@@ -222,3 +222,119 @@ strong enough to hold it; Fix I anchors it structurally as well.
 4. **Interaction with Fix D (SA-PINN).** Self-adaptive weights now include an
    `inlet` term; their joint behaviour with the raised `lambda_data` default is
    untested at full budget (SA is off by default).
+
+---
+
+# Implementation: Fixes J, K, L, M — collapse persisted after F–I
+
+**Date:** 2026-06-28
+**Motivation:** With Fixes F–I fully wired and on by default (relative data loss,
+searched `lambda_data`, data-misfit checkpoint selection, inlet constraint) the
+field still collapsed — WSS NRMSE > 0.8 across voxel resolutions, including the
+`n_colloc=5000` BHPO trials. The cause was **not** a wiring gap. Three structural
+causes remained, addressed below.
+
+## Root causes (beyond F–I)
+
+1. **Default architecture was the fragile, never-validated combo.** Defaults were
+   `use_hard_sdf=true` *and* `use_vec_potential=true`, but every F–I diagnostic was
+   run with **both off**. With the vector potential `u = curl(A)`, the Stokes
+   residual needs **3rd-order autograd** (gradient-starved, slow), and WSS at the
+   wall is `μ(U/L)·|curl(A)_tang|` — which can collapse *independently of velocity*
+   because the near-wall region (SDF→0, sparsest data) is where `curl(A)` is least
+   constrained.
+2. **No dense supervision, no global magnitude floor.** Only ~445 voxels + ~79
+   inlet points resisted collapse; the homogeneous physics residual still rewarded
+   `u→0` everywhere else.
+3. **No curriculum.** Physics was active from epoch 0, letting the field fall into
+   the trivial basin before sparse data could pull it out.
+
+## Fix J — Dense MRI interpolant prior
+
+**New file:** `src/hemodyn_pinn/pinn/interpolant.py`
+`build_velocity_interpolant` builds a dense scattered-data interpolant of the sparse
+MRI voxels (`RBFInterpolator` thin-plate spline — the scattered-3D analogue of a
+cubic spline — with a `LinearNDInterpolator`+nearest fallback). `dense_aux_targets`
+evaluates it at the interior collocation pool and **injects zero velocity at the wall
+centroids** so the prior respects no-slip. Honest: built only from measured MRI data,
+no CFD leakage.
+
+**Loss:** `losses.aux_data_loss` — relative MSE to the dense target (same form as
+`data_loss`). A non-zero magnitude target at *every* collocation point makes the
+trivial collapse structurally impossible early in training.
+
+## Fix K — Curriculum warm-up + decaying aux weight
+
+**File:** `trainer.py`. `PINNConfig` gains `lambda_aux`, `aux_decay_frac`, `n_warmup`,
+`interp_method`. For `epoch < n_warmup` the physics weight is forced to 0 (data +
+inlet + aux only); `lambda_aux` then ramps linearly to 0 over the first
+`aux_decay_frac` of the Adam phase (`_aux_weight`), so the dense prior dominates early
+and vanishes as physics takes over — the final field is governed by physics + data,
+not the interpolant. The L-BFGS phase uses the fully-decayed weight (≈0).
+
+## Fix L — One-sided magnitude-floor penalty
+
+**File:** `losses.magnitude_floor_loss` — `relu(target_rms − rms(|u_pred|))²` on the
+collocation batch, where `target_rms` = RMS of the observed non-dim velocity
+(precomputed in the trainer). Zero once the magnitude is healthy (never biases a
+correctly-scaled field), positive while collapsing. This is the user's "penalty vs the
+data statistics" idea, formulated one-sided on **RMS** (not deviation-from-mean, which
+would punish real spatial variation). `PINNConfig.lambda_mag_floor`.
+
+## Fix M — Demote the vector potential from the default
+
+**Files:** `configs/model/pinn_base.yaml`, `pinn_rff.yaml`, `configs/bhpo/default.yaml`
+set `use_vec_potential: false` (was `true`). The production path is now plain MLP +
+hard-SDF no-slip with the **soft** divergence residual (`skip_div_loss` already tracks
+this flag), avoiding the 3rd-order-autograd fragility that starved WSS. `networks.py`
+is unchanged and still supports the vector potential; re-enable it only if a diagnosis
+shows it trains. **This default change is gated on item 1 of the plan** — run
+`00_diagnose_collapse.py` per architecture variant first and keep whichever yields
+`velocity ratio ≈ 1` and `WSS NRMSE < 0.8`.
+
+## New default settings
+
+`configs/model/pinn_base.yaml` / `pinn_rff.yaml` (`training:`):
+`lambda_aux: 5.0`, `aux_decay_frac: 0.5`, `lambda_mag_floor: 1.0`, `n_warmup: 2000`,
+`interp_method: rbf`; `model.use_vec_potential: false`.
+`configs/bhpo/default.yaml`: same anti-collapse block (`n_warmup: 1000` for the shorter
+per-trial budget) and `use_vec_potential: false`. The full retrain (`04c`) reads the
+`training.*` curriculum knobs (they scale with the full `n_adam`); the short BHPO trials
+(`04b`) read the `bhpo.*` ones.
+
+## Wiring
+
+`scripts/04_train_pinn.py`, `04b_bhpo_search.py`, `04c_train_pinn_with_bhpo.py` build the
+interpolant after the MRI load and pass `x_aux/u_aux` + the new `PINNConfig` knobs.
+`bhpo/objective.py` accepts and forwards them into each trial's `PINNConfig` and
+`PINNTrainer`. (`lambda_aux` was *not* added to the BHPO search space — a fixed default
+keeps the 11-dim space stable; widen later if needed.)
+
+## Verification
+
+1. `scripts/00_diagnose_collapse.py geometry=caseC ... model.use_vec_potential=false`
+   before/after — healthy = velocity ratio ≈ 1, WSS NRMSE ≪ 0.8. Run per architecture
+   variant to confirm the Fix-M default.
+2. Short retrain (`training.n_adam=10000`) should flip the verdict to HEALTHY.
+3. Full path `04b → 04c → 05_evaluate`; expect `pinn_wss_mean_Pa` within a small factor
+   of `cfd_wss_mean_Pa`, and **resolution sensitivity restored** (NRMSE at `voxel_2p0mm`
+   > `voxel_0p5mm`).
+4. Ablations for the paper: `lambda_aux=0`, `n_warmup=0`, `lambda_mag_floor=0`,
+   `model.use_vec_potential=true` — quantify each contribution.
+
+**Tests:** `tests/test_interpolant.py` (new), `tests/test_losses.py` (aux + mag-floor +
+total_loss), `tests/test_trainer.py` (`TestCurriculumAux`: target_rms, aux flags, decay
+schedule, warm-up zeroes physics, short run). 117 passed locally on CPU.
+
+## Code reference map (Fixes J–M)
+
+| Concern | Location |
+|---|---|
+| Dense interpolant + aux targets | `pinn/interpolant.py` |
+| Aux + magnitude-floor losses | `pinn/losses.py` `aux_data_loss`, `magnitude_floor_loss` |
+| Aux/mag in combined loss | `pinn/losses.py` `total_loss` (`x_aux`, `lambda_aux`, `target_rms`, `lambda_mag_floor`) |
+| Warm-up + aux decay | `pinn/trainer.py` `run_adam`, `_aux_weight`, `_compute_loss` |
+| New config knobs | `pinn/trainer.py` `PINNConfig` (`lambda_aux`, `aux_decay_frac`, `lambda_mag_floor`, `n_warmup`, `interp_method`) |
+| Architecture demotion | `configs/model/*.yaml`, `configs/bhpo/default.yaml` (`use_vec_potential: false`) |
+| BHPO plumbing | `bhpo/objective.py` (`x_aux`, curriculum knobs) |
+| Script wiring | `scripts/04_train_pinn.py`, `04b_bhpo_search.py`, `04c_train_pinn_with_bhpo.py` |

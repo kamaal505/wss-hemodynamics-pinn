@@ -15,9 +15,11 @@ import torch.nn as nn
 from torch import Tensor
 
 from hemodyn_pinn.pinn.inference import (
+    _is_oom_error,
     compute_velocity_jacobian,
     compute_wss,
     compute_wss_auto,
+    compute_wss_batched,
     compute_wss_hard_sdf,
     predict_velocity_field,
 )
@@ -50,6 +52,72 @@ class LinearVelocityNet(nn.Module):
         u = self.A * x[:, 0]
         zeros = torch.zeros_like(u)
         return torch.stack([u, zeros, zeros, zeros], dim=1)
+
+
+class _OOMOnceNet(nn.Module):
+    """Wraps a net and raises an OOM RuntimeError on the first forward call."""
+
+    def __init__(self, inner: nn.Module) -> None:
+        super().__init__()
+        self.inner = inner
+        self.use_hard_sdf = getattr(inner, "use_hard_sdf", False)
+        self.calls = 0
+
+    def forward(self, x: Tensor, sdf_vals=None) -> Tensor:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("CUDA out of memory. Tried to allocate ...")
+        return self.inner(x)
+
+    def forward_raw(self, x: Tensor) -> Tensor:
+        return self.inner(x)
+
+
+class TestComputeWSSBatched:
+    def test_matches_unbatched(self) -> None:
+        net = PINNNetwork(n_hidden=16, n_layers=2, seed=0)
+        x = torch.rand(130, 3)
+        n = torch.rand(130, 3)
+        _, mag_full = compute_wss(net, x, n)
+        _, mag_batched = compute_wss_batched(net, x, n, batch_size=33)
+        assert mag_batched.shape == mag_full.shape
+        assert torch.allclose(mag_full, mag_batched, atol=1e-5)
+
+    def test_processes_all_points(self) -> None:
+        net = PINNNetwork(n_hidden=8, n_layers=2, seed=1)
+        x = torch.rand(100, 3)
+        n = torch.rand(100, 3)
+        tau, mag = compute_wss_batched(net, x, n, batch_size=16)
+        assert tau.shape == (100, 3)
+        assert mag.shape == (100,)
+
+    def test_oom_halves_batch_and_recovers(self) -> None:
+        """A transient OOM must not drop wall faces — the batch shrinks and retries."""
+        inner = PINNNetwork(n_hidden=8, n_layers=2, seed=2)
+        net = _OOMOnceNet(inner)
+        x = torch.rand(64, 3)
+        n = torch.rand(64, 3)
+        tau, mag = compute_wss_batched(net, x, n, batch_size=64, min_batch_size=8)
+        assert tau.shape == (64, 3)        # all points returned despite the OOM
+        assert torch.isfinite(mag).all()
+
+    def test_oom_below_floor_reraises(self) -> None:
+        class _AlwaysOOM(nn.Module):
+            use_hard_sdf = False
+            def forward(self, x, sdf_vals=None):
+                raise RuntimeError("CUDA out of memory")
+        with pytest.raises(RuntimeError, match="out of memory"):
+            compute_wss_batched(_AlwaysOOM(), torch.rand(10, 3), torch.rand(10, 3),
+                                batch_size=8, min_batch_size=8)
+
+
+class TestIsOOMError:
+    def test_cuda_and_mps(self) -> None:
+        assert _is_oom_error(RuntimeError("CUDA out of memory"))
+        assert _is_oom_error(RuntimeError("MPS backend out of memory"))
+
+    def test_non_oom(self) -> None:
+        assert not _is_oom_error(ValueError("nope"))
 
 
 class ShearFlowNet(nn.Module):

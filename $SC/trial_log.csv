@@ -1,0 +1,2 @@
+trial_id,wss_nrmse,elapsed_s,timestamp,lambda_data,lambda_phys,lambda_bc,n_layers,n_hidden,activation,use_rff,rff_sigma,lr_adam,n_colloc,wall_bias_frac
+1,0.999999,214.5,2026-06-27T23:36:22,271.9664777265271,1.1939123074076181,0.803474759954003,6,64,tanh,False,9.034564751977188,0.0020732381899961107,20000,0.43203334947213

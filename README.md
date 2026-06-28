@@ -7,7 +7,18 @@ Given sparse, noisy velocity samples from synthetic 4D-flow MRI (downsampled fro
 **Geometry source:** [AnXplore](https://github.com/aurelegoetz/AnXplore) — 101 patient-derived intracranial aneurysm geometries (Goetz et al. 2024, MIT licensed).  
 **Flow regime:** Steady incompressible Stokes (Re ≈ 0.10).  
 **CFD solver:** FEniCSx (dolfinx 0.10), Stokes with Poiseuille inlet.  
-**PINN:** PyTorch 2.x, tanh MLP with optional Random Fourier Features.
+**PINN:** PyTorch 2.x, tanh MLP with **hard SDF no-slip** (exact boundary condition) and optional Random Fourier Features. Trained with an anti-collapse recipe (see below).
+
+### Avoiding the trivial-solution collapse
+
+Steady Stokes is **linear and homogeneous**, so `u ≡ 0, p ≡ const` is an exact zero-residual solution: the PDE residual and no-slip BC both reward shrinking the field, and a few sparse MRI voxels cannot hold the magnitude on their own. Left unchecked the PINN collapses toward zero and grossly under-predicts WSS. The training recipe defeats this with four stacked measures:
+
+1. **Scale-invariant (relative) data + inflow loss** — normalised by the observation magnitude so the data weight is meaningful despite the tiny velocity scale (`U = 2×10⁻⁵ m/s`).
+2. **Inflow magnitude constraint** — matches a measured inlet velocity (an open-boundary datum is what makes the field magnitude well-posed).
+3. **Dense interpolant prior + curriculum warm-up** — a dense velocity field interpolated from the sparse voxels supervises every collocation point during a data-only warm-up, then decays as physics takes over.
+4. **One-sided magnitude floor** — penalises a predicted RMS below the observed RMS; zero once magnitude is healthy.
+
+Checkpoints are selected by **observation misfit**, never total loss (the collapsed field has the lowest total loss). Full derivation: `notes/magnitude_collapse_fix.md`; methodology: `docs/project_knowledge/03_ml_concepts.tex` (*Avoiding collapse to the trivial solution*).
 
 ---
 
@@ -22,7 +33,7 @@ hemodyn-pinn/
 ├── paper/                # manuscript source (LaTeX)
 ├── scripts/              # numbered pipeline entry points — run in order
 ├── src/hemodyn_pinn/     # importable Python package
-└── tests/                # pytest test suite (116 tests, all non-FEniCSx run on Windows)
+└── tests/                # pytest test suite (262 tests, all non-FEniCSx run on Windows)
 ```
 
 See [`configs/README.md`](configs/README.md), [`scripts/README.md`](scripts/README.md), [`src/hemodyn_pinn/README.md`](src/hemodyn_pinn/README.md), and [`tests/README.md`](tests/README.md) for folder-level details.
@@ -184,18 +195,35 @@ python scripts/04_train_pinn.py geometry=caseC model=pinn_rff
 python scripts/04_train_pinn.py geometry=caseC \
     training.device=cuda training.n_adam=10000
 
-# Override loss weights
+# Override loss weights / anti-collapse knobs
 python scripts/04_train_pinn.py geometry=caseC \
-    training.lambda_phys=10.0 training.lambda_bc=100.0
+    training.lambda_phys=10.0 training.lambda_aux=0.0 training.n_warmup=0
 ```
 
 Output: `data/checkpoints/<case_id>/<run_id>/best_model.pt` and `loss_history.npy`.
+
+### Step 4b/4c — BHPO search and retrain *(any OS)*
+
+`04_train_pinn.py` uses fixed hyperparameters. To search them (Bayesian HPO on caseC, the reference geometry) and retrain the winner at full budget:
+
+```bash
+python scripts/04b_bhpo_search.py geometry=caseC          # → data/bhpo_runs/caseC/best_params.json
+python scripts/04c_train_pinn_with_bhpo.py geometry=caseC # retrain winner → data/checkpoints/<...>_bhpo/
+```
+
+### Diagnosing collapse
+
+`scripts/00_diagnose_collapse.py` loads a checkpoint and reports the predicted/CFD velocity ratio, WSS ratio, and WSS NRMSE with a `HEALTHY`/`COLLAPSED` verdict — run it before and after any training change.
+
+```bash
+python scripts/00_diagnose_collapse.py geometry=caseC eval.run_suffix=adam50000 model=pinn_base
+```
 
 ---
 
 ## Testing
 
-Tests cover the geometry loader, MRI operator, PINN losses, and inference. All 116 tests run on Windows without FEniCSx (1 dolfinx test is auto-skipped).
+Tests cover the geometry loader, MRI operator, interpolant prior, PINN losses, training/curriculum, inference (incl. batched/OOM-adaptive WSS), and BHPO (incl. trial-failure robustness). All 262 tests run on Windows without FEniCSx (1 dolfinx test is auto-skipped).
 
 **Git Bash (Windows):**
 ```bash
@@ -245,3 +273,4 @@ Mesh coordinates are in **millimetres**. Convert to metres before any physical c
 - Wang, Wang, Perdikaris (2021). On the eigenvector bias of Fourier feature networks. *CMAME.* https://arxiv.org/abs/2012.10047
 - Karniadakis et al. (2021). Physics-informed machine learning. *Nat. Rev. Phys.* https://doi.org/10.1038/s42254-021-00314-5
 - Yang, Meng, Karniadakis (2021). B-PINNs. *JCP.* https://arxiv.org/abs/2003.06097
+- Krishnapriyan et al. (2021). Characterizing possible failure modes in physics-informed neural networks. *NeurIPS.* https://arxiv.org/abs/2109.01050

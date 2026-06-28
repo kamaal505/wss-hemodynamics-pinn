@@ -102,7 +102,7 @@ where each term is a mean-squared error:
 \mathcal{L}_{\text{phys}} &= \frac{1}{N_r}\sum_{j=1}^{N_r}\|\mathbf{R}_{\text{NS}}(\mathbf{u}_\theta, p_\theta)(\mathbf{x}_j, t_j)\|^2 + \frac{1}{N_r}\sum_{j=1}^{N_r}|\nabla\cdot\mathbf{u}_\theta(\mathbf{x}_j,t_j)|^2 && \text{(PDE residual)}\\
 \mathcal{L}_{\text{bc}} &= \frac{1}{N_b}\sum_{k=1}^{N_b}\|\mathbf{u}_\theta(\mathbf{x}_k^w, t_k) - \mathbf{0}\|^2 && \text{(no-slip)}
 \end{align*}
-The PDE residual $\mathbf{R}_{\text{NS}}$ is computed by autograd: the network's output is differentiated with respect to its input.
+The PDE residual $\mathbf{R}_{\text{NS}}$ is computed by autograd: the network's output is differentiated with respect to its input. In this project the three canonical terms are augmented by a pressure anchor, an inflow magnitude term, a dense-interpolant prior, and a magnitude floor --- all introduced to defeat the trivial-solution collapse (see \emph{Avoiding collapse to the trivial solution}).
 
 \subsection*{Collocation points}
 The residual is enforced at a set of \emph{collocation points} $\{\mathbf{x}_j\}$ sampled from the interior of $\Omega$. Sampling can be uniform random, Latin hypercube, importance-sampled (more density near walls / stenoses), or adaptive (residual-based).
@@ -120,7 +120,19 @@ Boundary conditions can be \emph{soft} (added to the loss) or \emph{hard} (baked
 \]
 where $\psi(\mathbf{x})$ is a smooth function vanishing on the wall (e.g.\ a signed-distance function $\psi(\mathbf{x}) = \mathrm{SDF}(\mathbf{x})$ inside the lumen). This guarantees no-slip exactly. Hard constraints often improve training stability and accuracy, especially in your problem because WSS recovery hinges on respecting no-slip.
 
-\textit{Project relevance:} hard no-slip constraint via SDF is one of your candidate methodological tweaks.
+\textit{Project relevance:} the hard no-slip constraint via SDF, $\mathbf{u}_\theta = \mathrm{SDF}(\mathbf{x})\cdot\mathbf{N}_\theta(\mathbf{x})$, is \textbf{adopted as the default}. WSS at the wall then follows analytically from the product rule (since $\mathrm{SDF}=0$, $\nabla\mathrm{SDF}=-\hat{\mathbf{n}}$ there): $|\boldsymbol\tau_w| = \mu(U/L)\,|\mathbf{N}_\theta^{\text{tang}}|$, needing only a forward pass.
+
+A second hard constraint --- a \emph{vector-potential} parameterisation $\mathbf{u}=\nabla\times\mathbf{A}_\theta$, which makes $\nabla\cdot\mathbf{u}\equiv0$ by identity --- was trialled but \textbf{demoted from the default}. It requires third-order autograd for the Stokes residual (the Laplacian of a curl), which is gradient-starved and slow, and it makes WSS depend on $|\nabla\times\mathbf{A}|$ exactly where the data is sparsest (the near-wall region), so WSS could collapse \emph{independently} of the bulk velocity. The production path is therefore the SDF-hard MLP with a \emph{soft} divergence penalty; the vector potential remains available as an ablation.
+
+\subsection*{Avoiding collapse to the trivial solution}
+Because the steady Stokes operator is linear and homogeneous, the data term is the \emph{only} thing pinning the field magnitude, and a handful of sparse, noisy interior voxels cannot hold it against a physics residual that is minimised by $\mathbf{u}\to\mathbf{0}$. The adopted recipe stacks four mutually reinforcing measures:
+\begin{enumerate}[noitemsep]
+\item \textbf{Scale-invariant (relative) data and inflow misfit.} Normalise each fit term by the mean squared observation magnitude, $\mathcal{L}_{\text{data}} = \overline{\|\mathbf{u}_\theta-\mathbf{u}^{\text{obs}}\|^2}\,/\,(\overline{\|\mathbf{u}^{\text{obs}}\|^2}+\varepsilon)$. A zero prediction then scores $\approx1$ regardless of the tiny absolute velocity scale ($U=2\times10^{-5}$\,m/s), so $\lambda_{\text{data}}$ is comparable to the physics weight and behaves predictably across cases and voxel sizes.
+\item \textbf{Inflow magnitude constraint.} Add a term matching $\mathbf{u}_\theta$ to a measured inlet velocity (sourced honestly from the near-inlet MRI voxels). An open-boundary velocity/flux condition is what makes the magnitude of a linear homogeneous field well-posed; $\mathbf{u}\equiv\mathbf{0}$ cannot satisfy a non-zero inflow.
+\item \textbf{Dense interpolant prior with curriculum warm-up.} Interpolate the sparse MRI voxels into a dense interior velocity field (scattered-data radial-basis / thin-plate spline, with no-slip injected at the wall) and supervise on it. This gives a non-zero magnitude target at \emph{every} collocation point. Train data-only for a short warm-up (physics off), then ramp physics in while the interpolant weight decays linearly to zero --- the prior prevents the early slide into the trivial basin, then yields to the physics so it does not bias the final field. (Curriculum / data-first warm-up: Krishnapriyan \emph{et al.}\ 2021.)
+\item \textbf{One-sided magnitude floor.} Penalise $\big[\mathrm{relu}(\text{rms}_{\text{obs}} - \text{rms}(|\mathbf{u}_\theta|))\big]^2$ over the collocation batch: zero once the field magnitude is healthy (so a correctly scaled solution is never biased), positive while collapsing. Penalising the \emph{RMS/variance} --- not the deviation from the data mean --- is essential, so spatial structure is not flattened.
+\end{enumerate}
+Checkpoint selection compounds these: the ``best'' model is chosen by \emph{observation misfit} (data $+$ inflow), never total loss, because the collapsed near-zero field has the \emph{lowest} total loss and would otherwise be saved as best.
 
 \section{Inverse problems and data assimilation with PINNs}
 
@@ -148,7 +160,7 @@ Cosine annealing or step decay. Start at $10^{-3}$, anneal to $10^{-6}$.
 
 \subsection*{Failure modes (you will see these)}
 \begin{enumerate}[noitemsep]
-\item \textbf{Convergence to trivial $\mathbf{u}\equiv\mathbf{0}$.} Indicates loss-balance pathology: physics + no-slip dominate, data term too weak. Increase $\lambda_{\text{data}}$ or rescale.
+\item \textbf{Convergence to trivial $\mathbf{u}\equiv\mathbf{0}$.} The dominant failure mode in this project, because steady Stokes is \emph{linear and homogeneous}: $\mathbf{u}\equiv\mathbf{0},\,p\equiv\text{const}$ is an exact zero-residual solution, so physics + no-slip both reward shrinking the field. Raising $\lambda_{\text{data}}$ alone was insufficient; see \emph{Avoiding collapse to the trivial solution} below for the full anti-collapse recipe (scale-invariant data loss, inflow magnitude constraint, dense interpolant prior with curriculum warm-up, and a one-sided magnitude floor).
 \item \textbf{Smooth bulk fit, wrong WSS.} The classical near-wall failure. Symptoms: low validation MSE on volume velocity but $\boldsymbol{\tau}_w$ off by a factor.
 \item \textbf{Pressure indeterminacy.} Pressure is determined only up to a constant by the equations; the network may drift. Anchor pressure at one outlet point.
 \item \textbf{Stiff loss landscape.} Symptom: training stalls at large loss. Causes: inadequate non-dimensionalisation; high Re; bad initialisation. Mitigations: rescale, reduce Re for development, use SIREN initialisation, gradient clipping.
@@ -159,7 +171,7 @@ Once $\mathbf{u}_\theta$ is trained, query at a wall point $\mathbf{x}_w$ with o
 \[
 \mathbf{D}_\theta(\mathbf{x}_w) = \tfrac{1}{2}\!\big(\nabla\mathbf{u}_\theta + (\nabla\mathbf{u}_\theta)^\top\big)\Big|_{\mathbf{x}_w},
 \]
-then $\boldsymbol{\tau}_w$ from \eqref{eq:WSS} (Document 2). \emph{The network is differentiable everywhere, by construction; this is the central PINN advantage over voxel-based finite differences.}
+then $\boldsymbol{\tau}_w$ from \eqref{eq:WSS} (Document 2). \emph{The network is differentiable everywhere, by construction; this is the central PINN advantage over voxel-based finite differences.} With the hard-SDF default this reduces to the closed form $|\boldsymbol\tau_w|=\mu(U/L)\,|\mathbf{N}_\theta^{\text{tang}}|$ (no autograd through the wall); without it, the autograd Jacobian path above is used.
 
 \section{Evaluation: more than just one MSE}
 
@@ -235,6 +247,7 @@ In addition to the must-read PINN papers in the strategy document:
 \item Wang, Wang, Perdikaris 2021 (CMAME) --- ``On the eigenvector bias of Fourier feature networks: from regression to solving multi-scale PDEs with PINNs'' --- the bridge to your problem.
 \item Karniadakis et al.\ 2021 (Nat.\ Rev.\ Phys.) --- ``Physics-informed machine learning'' --- canonical review.
 \item Cai et al.\ 2022 ``Physics-informed neural networks (PINNs) for fluid mechanics'' (Acta Mech. Sin.) --- domain-specific review.
+\item Krishnapriyan et al.\ 2021 (NeurIPS) --- ``Characterizing possible failure modes in physics-informed neural networks'' --- motivates the curriculum / data-first warm-up used in \S\ref{sec:anticollapse}.
 \end{itemize}
 
 \section*{Synthesis: what your tech stack should look like}

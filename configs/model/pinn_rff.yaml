@@ -14,7 +14,7 @@ model:
   # Mirror pinn_base so scripts/04 (which reads cfg.model.use_hard_sdf
   # unconditionally) does not crash when model=pinn_rff.
   use_hard_sdf: true
-  use_vec_potential: true
+  use_vec_potential: false   # demoted; see pinn_base.yaml / notes (Fix M)
 
 training:
   n_colloc: 10000
@@ -32,6 +32,13 @@ training:
   lambda_inlet: 10.0
   inlet_source: mri   # mri | cfd (diagnostic) | none
   inlet_band_mm: 2.0
+  # Dense interpolant supervision + curriculum (Fixes J–L); see pinn_base.yaml.
+  lambda_aux: 5.0
+  aux_decay_frac: 0.5
+  lambda_mag_floor: 1.0
+  n_warmup: 2000
+  interp_method: rbf
+  n_aux: 4096
   checkpoint_every: 1000
   device: "cpu"
   wall_bias_frac: 0.0  # fraction of collocation pts drawn from near-wall pool
